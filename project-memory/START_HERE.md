@@ -2,15 +2,22 @@
 
 ## Current milestone
 
-V0.1 — Foundation / deterministic station core — ACCEPTED.
+V0.2 — Channel-first Cloudflare runtime — ACTIVE / SOURCE + INFRA VERIFIED, LIVE DEPLOY PENDING.
 
-The accepted V0.1 architecture proves the control loop before paid music generation:
-- deterministic prompt queue and vote-first selection
-- station-bible continuity state
-- ready-audio buffer pressure
-- ready -> archive -> starved playback fallback
-- Cloudflare Worker API skeleton
-- unit-tested station-state transitions
+V0.2 has moved the accepted V0.1 control model to a creator-owned channel runtime:
+- one logical `ChannelConductor` Durable Object per `channel_id`
+- Durable Object persisted channel authority and restart-safe state
+- channel-scoped D1 schema and R2 `channels/{channel_id}/...` assets
+- creator ownership and credential-reference isolation
+- durable prompt idempotency plus generation/asset replay receipts
+- WebSocket state fanout
+- zero-cost real RIFF/WAV fixture audio
+- optional Workers AI control brief with deterministic fallback
+- concurrent two-channel and 30-minute no-stall simulation coverage
+
+Exact source checkpoint: `9642f4ca70f422cf97ec84ce3adaa0023eb74d90`.
+CI: `33337926486` — success.
+Cloudflare resources: D1 `infinite-radio-db` (`1293ae6e-8caf-4e95-90d8-136945370d33`) and R2 `infinite-radio-assets`; D1 schema verified remotely.
 
 ## Architecture boundary
 
@@ -24,9 +31,13 @@ x402 is planned later as an optional channel-owned commerce/distribution rail fo
 
 ## Next
 
-V0.2 — Channel-first Cloudflare runtime.
+Close V0.2 live acceptance without weakening its isolation model:
+1. deploy the Worker with the `ChannelConductor` Durable Object migration plus D1/R2/AI bindings
+2. smoke `/health`, channel init/state, idempotent prompt retry, conductor fixture generation, playback, and a second isolated channel against the live Worker
+3. verify D1/R2 channel-scoped receipts/assets after the live run
+4. only then mark V0.2 `ACCEPTED` and advance the roadmap to V0.3 BYOK music providers
 
-Turn the current deterministic station primitive into one isolated channel: one logical Durable Object conductor per `channel_id`, channel-scoped D1/R2 state, fixture/archive audio, Workers AI for inexpensive control intelligence, WebSocket state, and explicit two-channel isolation tests. No paid music-generation API is required for V0.2.
+No paid music-generation API is required for the V0.2 acceptance run.
 
 See:
 - `docs/ROADMAP.md`
