@@ -437,9 +437,13 @@ export function completeMusicGeneration(state, jobId, options = {}) {
     createdAt,
   };
   const readyState = queueReadyTrack(state, track);
+  const archive = readyState.archive.some((candidate) => candidate.id === track.id)
+    ? readyState.archive
+    : [...readyState.archive, track];
   return {
     state: {
       ...readyState,
+      archive,
       generationJobs: readyState.generationJobs.map((candidate) =>
         candidate.id === jobId
           ? {
