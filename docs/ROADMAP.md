@@ -2,7 +2,7 @@
 
 Status legend: `PLANNED` · `ACTIVE` · `ACCEPTED`
 
-## V0.1 — Foundation / deterministic station core — ACTIVE
+## V0.1 — Foundation / deterministic station core — ACCEPTED
 
 Goal: prove the station control model before spending money on generation.
 
@@ -17,8 +17,8 @@ Goal: prove the station control model before spending money on generation.
 - [x] prompt-to-generation brief compiler
 - [x] Cloudflare Worker API skeleton
 - [x] unit tests for core state transitions
-- [ ] CI run green on canonical commit
-- [ ] CairnStone repo + roadmap acceptance
+- [x] CI run green on canonical commit
+- [x] CairnStone repo + roadmap acceptance
 
 ### Acceptance
 - core tests pass
