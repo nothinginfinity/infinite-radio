@@ -29,7 +29,7 @@ Goal: prove the station control model before spending money on generation.
 
 ---
 
-## V0.2 — Channel-first Cloudflare runtime — ACTIVE
+## V0.2 — Channel-first Cloudflare runtime — ACCEPTED
 
 Goal: turn the accepted single-station control loop into one isolated creator channel while keeping development Cloudflare-native and generation-cost-free.
 
@@ -38,7 +38,11 @@ Goal: turn the accepted single-station control loop into one isolated creator ch
 - D1 `infinite-radio-db` and R2 `infinite-radio-assets` exist; the V0.2 D1 schema is applied and verified remotely
 - source acceptance tests include Durable Object reconstruction, late retry idempotency, ownership/credential isolation, two-channel isolation, actual RIFF/WAV fixture output, Workers AI deterministic fallback, and a 30-minute concurrent fixture simulation
 - exact code checkpoint `9642f4ca70f422cf97ec84ce3adaa0023eb74d90` passed CI run `33337926486`
-- live Worker deployment with the Durable Object migration/bindings is still unverified; V0.2 remains `ACTIVE` until production smoke acceptance closes that boundary
+- live Worker deployed and externally accepted at `https://infinite-radio.jaredtechfit.workers.dev`
+- production acceptance run `33339178936` succeeded after exact deploy, D1 migration check, and 12/12 source tests
+- Cloudflare Worker version `6e060a21-d448-4df2-80c5-c7d4f8d84924` exposed `CHANNEL_CONDUCTOR`, D1, R2, and Workers AI bindings
+- live acceptance proved two isolated creator channels, owner rejection, prompt replay idempotency before and after consumption, channel-scoped fixture assets, persisted Durable Object state, and Workers AI control output
+- V0.2 is `ACCEPTED`; V0.3 BYOK music provider layer is next
 
 ### Deliverables
 - first-class `channel_id` and creator/channel ownership model
