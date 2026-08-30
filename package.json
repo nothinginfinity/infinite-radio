@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Creator-owned multi-channel AI radio with isolated Cloudflare runtime state and BYOK music generation."
+  "description": "Creator-owned multi-channel AI radio with isolated Cloudflare runtime state and BYOK music generation.",
   "scripts": {
     "test": "node --test",
     "check": "node --check src/index.js && node --check src/station-state.js && node --test",
