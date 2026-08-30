@@ -39,7 +39,13 @@ function normalizePolicy(current, update = {}) {
   if (!Object.values(MUSIC_PROVIDERS).includes(provider)) {
     throw new Error("music_provider_unsupported");
   }
-  const credentialRef = update.credentialRef ?? current.credentialRef ?? null;
+  const providerChanged = provider !== (current.provider ?? MUSIC_PROVIDERS.FIXTURE);
+  const hasCredentialRef = Object.prototype.hasOwnProperty.call(update, "credentialRef");
+  const credentialRef = hasCredentialRef
+    ? update.credentialRef
+    : providerChanged
+      ? null
+      : current.credentialRef ?? null;
   if (provider !== MUSIC_PROVIDERS.FIXTURE && !credentialRef) {
     throw new Error("credential_ref_required");
   }
@@ -55,7 +61,7 @@ function normalizePolicy(current, update = {}) {
     generationCapPerHour,
     generationCapPerDay,
     provider,
-    model: update.model ?? current.model ?? defaultProviderModel(provider),
+    model: update.model ?? (providerChanged ? defaultProviderModel(provider) : current.model) ?? defaultProviderModel(provider),
     credentialRef,
   };
 }
