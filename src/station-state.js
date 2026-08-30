@@ -305,7 +305,7 @@ export function completeFixtureGeneration(state, jobId, options = {}) {
     generationJobId: jobId,
     provider: "fixture",
     durationSeconds,
-    assetKey: channelAssetKey(state.channelId, `fixture/${jobId}.json`),
+    assetKey: channelAssetKey(state.channelId, `fixture/${jobId}.wav`),
     createdAt: new Date(options.now ?? Date.now()).toISOString(),
   };
   const readyState = queueReadyTrack(state, track);
