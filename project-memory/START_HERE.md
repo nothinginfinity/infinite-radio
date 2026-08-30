@@ -20,7 +20,7 @@ The live/high-frequency data plane belongs in Cloudflare infrastructure. CairnSt
 
 V0.2 — Durable single-station conductor.
 
-Move in-memory station state into a Durable Object, add$D1[DEBUG] schemas for prompts/generations/tracks/votes/provider receipts, define the R2 audio asset contract, add idempotent job lifecycles and WebSocket state, then prove a 30-minute fixture-audio simulation without station stalls.
+Move in-memory station state into a Durable Object, add D1 schemas for prompts/generations/tracks/votes/provider receipts, define the R2 audio asset contract, add idempotent job lifecycles and WebSocket state, then prove a 30-minute fixture-audio simulation without station stalls.
 
 See:
 - `docs/ROADMAP.md`
