@@ -5,5 +5,23 @@ compatibility_date = "2026-08-30"
 [observability]
 enabled = true
 
-# V0.1 intentionally has no paid provider secrets or storage bindings.
-# Durable Objects, D1, and R2 are introduced only when their roadmap slices land.
+[[durable_objects.bindings]]
+name = "CHANNEL_CONDUCTOR"
+class_name = "ChannelConductor"
+
+[[migrations]]
+tag = "v0.2-channel-conductor"
+new_sqlite_classes = ["ChannelConductor"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "infinite-radio-db"
+database_id = "1293ae6e-8caf-4e95-90d8-136945370d33"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "infinite-radio-assets"
+
+[ai]
+binding = "AI"

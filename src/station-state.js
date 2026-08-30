@@ -1,16 +1,45 @@
 export const DEFAULT_BUFFER_TARGET_SECONDS = 90;
+export const DEFAULT_GENERATION_CAP_PER_HOUR = 120;
+export const DEFAULT_FIXTURE_TRACK_SECONDS = 30;
 
-export function createStationState(overrides = {}) {
+function requiredId(value, code) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized || normalized.includes("..") || normalized.includes("/")) {
+    throw new Error(code);
+  }
+  return normalized;
+}
+
+function clone(value) {
+  return structuredClone(value);
+}
+
+export function createChannelState(overrides = {}) {
+  const channelId = requiredId(overrides.channelId ?? "main", "channel_id_required");
+  const creatorId = requiredId(overrides.creatorId ?? "local-dev", "creator_id_required");
+  const policy = overrides.policy ?? {};
+
   return {
-    stationId: overrides.stationId ?? "main",
+    schemaVersion: 2,
+    channelId,
+    creatorId,
     mode: overrides.mode ?? "dj",
-    status: overrides.status ?? "booting",
+    status: overrides.status ?? "idle",
     currentTrack: overrides.currentTrack ?? null,
-    readyQueue: overrides.readyQueue ?? [],
-    promptQueue: overrides.promptQueue ?? [],
-    archive: overrides.archive ?? [],
-    bufferTargetSeconds:
-      overrides.bufferTargetSeconds ?? DEFAULT_BUFFER_TARGET_SECONDS,
+    readyQueue: clone(overrides.readyQueue ?? []),
+    promptQueue: clone(overrides.promptQueue ?? []),
+    generationJobs: clone(overrides.generationJobs ?? []),
+    archive: clone(overrides.archive ?? []),
+    policy: {
+      bufferTargetSeconds:
+        policy.bufferTargetSeconds ??
+        overrides.bufferTargetSeconds ??
+        DEFAULT_BUFFER_TARGET_SECONDS,
+      generationCapPerHour:
+        policy.generationCapPerHour ?? DEFAULT_GENERATION_CAP_PER_HOUR,
+      provider: policy.provider ?? "fixture",
+      credentialRef: policy.credentialRef ?? null,
+    },
     bible: {
       identity:
         overrides.bible?.identity ??
@@ -28,21 +57,84 @@ export function createStationState(overrides = {}) {
         "same joke repeatedly",
       ],
     },
+    generationWindow: {
+      startedAt: overrides.generationWindow?.startedAt ?? null,
+      count: overrides.generationWindow?.count ?? 0,
+    },
     counters: {
       promptsAccepted: overrides.counters?.promptsAccepted ?? 0,
+      promptReplays: overrides.counters?.promptReplays ?? 0,
+      generationJobsCreated: overrides.counters?.generationJobsCreated ?? 0,
+      generationReplays: overrides.counters?.generationReplays ?? 0,
       tracksQueued: overrides.counters?.tracksQueued ?? 0,
       archiveFallbacks: overrides.counters?.archiveFallbacks ?? 0,
+      fixtureTracks: overrides.counters?.fixtureTracks ?? 0,
+      autopilotPrompts: overrides.counters?.autopilotPrompts ?? 0,
     },
   };
 }
 
-export function enqueuePrompt(state, prompt) {
+export function createStationState(overrides = {}) {
+  return createChannelState({
+    channelId: overrides.channelId ?? overrides.stationId ?? "main",
+    creatorId: overrides.creatorId ?? "local-dev",
+    ...overrides,
+  });
+}
+
+export function assertChannelOwner(state, creatorId) {
+  if (!creatorId || creatorId !== state.creatorId) {
+    throw new Error("channel_owner_required");
+  }
+  return true;
+}
+
+export function channelAssetKey(channelId, suffix) {
+  const safeChannelId = requiredId(channelId, "channel_id_required");
+  const safeSuffix = String(suffix ?? "").replace(/^\/+/, "");
+  if (!safeSuffix || safeSuffix.includes("..")) {
+    throw new Error("asset_suffix_required");
+  }
+  return `channels/${safeChannelId}/${safeSuffix}`;
+}
+
+export function submitPrompt(state, prompt) {
   if (!prompt?.text?.trim()) {
     throw new Error("prompt_text_required");
   }
 
+  const idempotencyKey = String(
+    prompt.idempotencyKey ?? prompt.id ?? crypto.randomUUID(),
+  ).trim();
+  if (!idempotencyKey) throw new Error("idempotency_key_required");
+
+  const existing = state.promptQueue.find(
+    (candidate) => candidate.idempotencyKey === idempotencyKey,
+  );
+  if (existing) {
+    if (
+      existing.text !== prompt.text.trim() ||
+      existing.userId !== (prompt.userId ?? "anonymous")
+    ) {
+      throw new Error("idempotency_conflict");
+    }
+    return {
+      state: {
+        ...state,
+        counters: {
+          ...state.counters,
+          promptReplays: state.counters.promptReplays + 1,
+        },
+      },
+      prompt: existing,
+      deduped: true,
+    };
+  }
+
   const candidate = {
-    id: prompt.id ?? crypto.randomUUID(),
+    id: prompt.id ?? `prompt:${idempotencyKey}`,
+    channelId: state.channelId,
+    idempotencyKey,
     userId: prompt.userId ?? "anonymous",
     text: prompt.text.trim(),
     votes: Number.isFinite(prompt.votes) ? prompt.votes : 0,
@@ -50,13 +142,21 @@ export function enqueuePrompt(state, prompt) {
   };
 
   return {
-    ...state,
-    promptQueue: [...state.promptQueue, candidate],
-    counters: {
-      ...state.counters,
-      promptsAccepted: state.counters.promptsAccepted + 1,
+    state: {
+      ...state,
+      promptQueue: [...state.promptQueue, candidate],
+      counters: {
+        ...state.counters,
+        promptsAccepted: state.counters.promptsAccepted + 1,
+      },
     },
+    prompt: candidate,
+    deduped: false,
   };
+}
+
+export function enqueuePrompt(state, prompt) {
+  return submitPrompt(state, prompt).state;
 }
 
 export function selectNextPrompt(state) {
@@ -68,7 +168,6 @@ export function selectNextPrompt(state) {
     if (b.votes !== a.votes) return b.votes - a.votes;
     return a.createdAt.localeCompare(b.createdAt);
   });
-
   const selected = ranked[0];
 
   return {
@@ -84,10 +183,18 @@ export function queueReadyTrack(state, track) {
   if (!track?.id || !Number.isFinite(track.durationSeconds)) {
     throw new Error("valid_track_required");
   }
+  if (track.channelId && track.channelId !== state.channelId) {
+    throw new Error("channel_scope_violation");
+  }
+
+  const scopedTrack = { ...track, channelId: state.channelId };
+  if (state.readyQueue.some((candidate) => candidate.id === scopedTrack.id)) {
+    return state;
+  }
 
   return {
     ...state,
-    readyQueue: [...state.readyQueue, track],
+    readyQueue: [...state.readyQueue, scopedTrack],
     counters: {
       ...state.counters,
       tracksQueued: state.counters.tracksQueued + 1,
@@ -103,7 +210,176 @@ export function readyBufferSeconds(state) {
 }
 
 export function needsGeneration(state) {
-  return readyBufferSeconds(state) < state.bufferTargetSeconds;
+  return readyBufferSeconds(state) < state.policy.bufferTargetSeconds;
+}
+
+function generationWindowFor(state, now) {
+  const timestamp = new Date(now ?? Date.now()).getTime();
+  const start = state.generationWindow.startedAt
+    ? new Date(state.generationWindow.startedAt).getTime()
+    : null;
+  if (!start || timestamp - start >= 60 * 60 * 1000) {
+    return { startedAt: new Date(timestamp).toISOString(), count: 0 };
+  }
+  return state.generationWindow;
+}
+
+export function createGenerationJob(state, selectedPrompt, options = {}) {
+  if (!selectedPrompt?.id) throw new Error("selected_prompt_required");
+  if (selectedPrompt.channelId && selectedPrompt.channelId !== state.channelId) {
+    throw new Error("channel_scope_violation");
+  }
+  if (
+    options.credentialRef !== undefined &&
+    options.credentialRef !== state.policy.credentialRef
+  ) {
+    throw new Error("credential_scope_violation");
+  }
+
+  const idempotencyKey = options.idempotencyKey ?? `generation:${selectedPrompt.id}`;
+  const existing = state.generationJobs.find(
+    (job) => job.idempotencyKey === idempotencyKey,
+  );
+  if (existing) {
+    return {
+      state: {
+        ...state,
+        counters: {
+          ...state.counters,
+          generationReplays: state.counters.generationReplays + 1,
+        },
+      },
+      job: existing,
+      deduped: true,
+    };
+  }
+
+  const window = generationWindowFor(state, options.now);
+  if (window.count >= state.policy.generationCapPerHour) {
+    throw new Error("generation_cap_reached");
+  }
+
+  const job = {
+    id: options.id ?? `job:${selectedPrompt.id}`,
+    channelId: state.channelId,
+    idempotencyKey,
+    promptId: selectedPrompt.id,
+    provider: state.policy.provider,
+    credentialRef: state.policy.credentialRef,
+    status: "queued",
+    createdAt: new Date(options.now ?? Date.now()).toISOString(),
+    updatedAt: new Date(options.now ?? Date.now()).toISOString(),
+  };
+
+  return {
+    state: {
+      ...state,
+      generationJobs: [...state.generationJobs, job],
+      generationWindow: { ...window, count: window.count + 1 },
+      counters: {
+        ...state.counters,
+        generationJobsCreated: state.counters.generationJobsCreated + 1,
+      },
+    },
+    job,
+    deduped: false,
+  };
+}
+
+export function completeFixtureGeneration(state, jobId, options = {}) {
+  const job = state.generationJobs.find((candidate) => candidate.id === jobId);
+  if (!job) throw new Error("generation_job_not_found");
+  if (job.channelId !== state.channelId) throw new Error("channel_scope_violation");
+
+  const existingTrack = state.readyQueue.find(
+    (track) => track.generationJobId === jobId,
+  );
+  if (existingTrack) {
+    return { state, track: existingTrack, deduped: true };
+  }
+
+  const durationSeconds = options.durationSeconds ?? DEFAULT_FIXTURE_TRACK_SECONDS;
+  const track = {
+    id: options.trackId ?? `track:${jobId}`,
+    channelId: state.channelId,
+    generationJobId: jobId,
+    provider: "fixture",
+    durationSeconds,
+    assetKey: channelAssetKey(state.channelId, `fixture/${jobId}.json`),
+    createdAt: new Date(options.now ?? Date.now()).toISOString(),
+  };
+  const readyState = queueReadyTrack(state, track);
+
+  return {
+    state: {
+      ...readyState,
+      generationJobs: readyState.generationJobs.map((candidate) =>
+        candidate.id === jobId
+          ? {
+              ...candidate,
+              status: "ready",
+              updatedAt: track.createdAt,
+              trackId: track.id,
+            }
+          : candidate,
+      ),
+      counters: {
+        ...readyState.counters,
+        fixtureTracks: readyState.counters.fixtureTracks + 1,
+      },
+    },
+    track,
+    deduped: false,
+  };
+}
+
+function makeAutopilotPrompt(state, sequence, now) {
+  return {
+    id: `autopilot:${state.channelId}:${sequence}`,
+    channelId: state.channelId,
+    idempotencyKey: `autopilot:${sequence}`,
+    userId: "system:autopilot",
+    text: `Continue ${state.bible.identity} in era ${state.bible.era}.`,
+    votes: 0,
+    createdAt: new Date(now ?? Date.now()).toISOString(),
+  };
+}
+
+export function ensureFixtureBuffer(state, options = {}) {
+  const maxTracks = options.maxTracks ?? 20;
+  const created = [];
+  let next = state;
+
+  for (let i = 0; i < maxTracks && needsGeneration(next); i += 1) {
+    let selectedResult = selectNextPrompt(next);
+    next = selectedResult.state;
+    let prompt = selectedResult.selected;
+    if (!prompt) {
+      const sequence = next.counters.autopilotPrompts + 1;
+      prompt = makeAutopilotPrompt(next, sequence, options.now);
+      next = {
+        ...next,
+        counters: {
+          ...next.counters,
+          autopilotPrompts: sequence,
+        },
+      };
+    }
+
+    const scheduled = createGenerationJob(next, prompt, {
+      now: options.now,
+      credentialRef: next.policy.credentialRef,
+    });
+    next = scheduled.state;
+    const completed = completeFixtureGeneration(next, scheduled.job.id, {
+      now: options.now,
+      durationSeconds: options.durationSeconds,
+    });
+    next = completed.state;
+    created.push({ prompt, job: scheduled.job, track: completed.track });
+  }
+
+  return { state: next, created };
 }
 
 export function chooseNextPlayable(state) {
@@ -112,18 +388,26 @@ export function chooseNextPlayable(state) {
     return {
       source: "ready",
       track: next,
-      state: { ...state, currentTrack: next, readyQueue: rest, status: "playing" },
+      state: {
+        ...state,
+        currentTrack: next,
+        readyQueue: rest,
+        status: "playing",
+      },
     };
   }
 
   if (state.archive.length > 0) {
     const next = state.archive[0];
+    if (next.channelId && next.channelId !== state.channelId) {
+      throw new Error("channel_scope_violation");
+    }
     return {
       source: "archive",
-      track: next,
+      track: { ...next, channelId: state.channelId },
       state: {
         ...state,
-        currentTrack: next,
+        currentTrack: { ...next, channelId: state.channelId },
         status: "fallback",
         counters: {
           ...state.counters,
@@ -141,13 +425,23 @@ export function chooseNextPlayable(state) {
 }
 
 export function compileStationBrief(state, selectedPrompt) {
+  if (selectedPrompt?.channelId && selectedPrompt.channelId !== state.channelId) {
+    throw new Error("channel_scope_violation");
+  }
   return {
-    stationId: state.stationId,
+    channelId: state.channelId,
+    stationId: state.channelId,
+    creatorId: state.creatorId,
     mode: state.mode,
     listenerPrompt: selectedPrompt?.text ?? null,
     listenerId: selectedPrompt?.userId ?? null,
-    continuity: structuredClone(state.bible),
+    continuity: clone(state.bible),
+    providerPolicy: {
+      provider: state.policy.provider,
+      credentialRef: state.policy.credentialRef,
+      generationCapPerHour: state.policy.generationCapPerHour,
+    },
     instruction:
-      "Create one short radio segment that satisfies the listener idea while remaining recognizably part of the current station universe. Do not imitate a living artist by name.",
+      "Create one short radio segment that satisfies the listener idea while remaining recognizably part of the current channel universe. Do not imitate a living artist by name.",
   };
 }

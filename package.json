@@ -1,14 +1,15 @@
 {
   "name": "infinite-radio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Crowd-steered infinite AI radio with buffered generation and persistent station memory.",
+  "description": "Creator-owned multi-channel AI radio with isolated Cloudflare runtime state and zero-cost fixture generation.",
   "scripts": {
     "test": "node --test",
     "check": "node --check src/index.js && node --check src/station-state.js && node --test",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "db:migrate:remote": "wrangler d1 migrations apply infinite-radio-db --remote"
   },
   "devDependencies": {
     "wrangler": "^4.35.0"
