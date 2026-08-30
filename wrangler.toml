@@ -5,6 +5,13 @@ compatibility_date = "2026-08-30"
 [observability]
 enabled = true
 
+[observability.logs]
+enabled = true
+invocation_logs = false
+
+[observability.traces]
+enabled = false
+
 [[durable_objects.bindings]]
 name = "CHANNEL_CONDUCTOR"
 class_name = "ChannelConductor"
