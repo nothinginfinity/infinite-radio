@@ -177,6 +177,8 @@ test("fal adapter uses a request-scoped client and validates WAV output", async 
   assert.equal(result.providerRequestId, "fal-request-1");
   assert.equal(result.durationSeconds, 30);
   assert.equal(result.costMicrousd, 10000);
+  assert.equal(result.provenance.terms_uri, "https://fal.ai/legal/terms-of-service");
+  assert.equal(result.provenance.api_terms_uri, "https://fal.ai/legal/api-services");
   assert.equal(new TextDecoder().decode(result.bytes.slice(0, 4)), "RIFF");
 });
 
