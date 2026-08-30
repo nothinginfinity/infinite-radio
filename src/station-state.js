@@ -116,6 +116,7 @@ export function createChannelState(overrides = {}) {
       consecutiveFailures: 0,
       lastError: null,
       checkedAt: null,
+      retryAfter: null,
     }),
     counters: {
       promptsAccepted: overrides.counters?.promptsAccepted ?? 0,
@@ -367,6 +368,14 @@ export function createGenerationJob(state, selectedPrompt, options = {}) {
   };
 }
 
+export function assertProviderReady(state, now = Date.now()) {
+  const retryAfter = state.providerHealth?.retryAfter;
+  if (retryAfter && new Date(now).getTime() < new Date(retryAfter).getTime()) {
+    throw new Error("provider_backoff_active");
+  }
+  return true;
+}
+
 export function markGenerationRunning(state, jobId, now = Date.now()) {
   const job = state.generationJobs.find((candidate) => candidate.id === jobId);
   if (!job) throw new Error("generation_job_not_found");
@@ -384,6 +393,9 @@ export function failGeneration(state, jobId, errorCode, now = Date.now()) {
   const job = state.generationJobs.find((candidate) => candidate.id === jobId);
   if (!job) throw new Error("generation_job_not_found");
   const updatedAt = new Date(now).toISOString();
+  const consecutiveFailures = (state.providerHealth?.consecutiveFailures ?? 0) + 1;
+  const backoffSeconds = Math.min(300, 5 * (2 ** Math.min(consecutiveFailures - 1, 6)));
+  const retryAfter = new Date(new Date(now).getTime() + backoffSeconds * 1000).toISOString();
   return {
     ...state,
     generationJobs: state.generationJobs.map((candidate) =>
@@ -393,9 +405,10 @@ export function failGeneration(state, jobId, errorCode, now = Date.now()) {
     ),
     providerHealth: {
       status: "degraded",
-      consecutiveFailures: (state.providerHealth?.consecutiveFailures ?? 0) + 1,
+      consecutiveFailures,
       lastError: String(errorCode ?? "provider_generation_failed"),
       checkedAt: updatedAt,
+      retryAfter,
     },
   };
 }
@@ -445,6 +458,7 @@ export function completeMusicGeneration(state, jobId, options = {}) {
         consecutiveFailures: 0,
         lastError: null,
         checkedAt: createdAt,
+        retryAfter: null,
       },
     },
     track,
