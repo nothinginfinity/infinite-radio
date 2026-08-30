@@ -7,9 +7,10 @@ const channelB = `accept-b-${runId}`;
 const creatorA = `creator-a-${runId}`;
 const creatorB = `creator-b-${runId}`;
 
-async function call(path, { method = "GET", creatorId, body, expected = [200] } = {}) {
+async function call(path, { method = "GET", creatorId, providerKey, body, expected = [200] } = {}) {
   const headers = {};
   if (creatorId) headers["x-creator-id"] = creatorId;
+  if (providerKey) headers["x-provider-key"] = providerKey;
   if (body !== undefined) headers["content-type"] = "application/json";
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -32,12 +33,13 @@ async function call(path, { method = "GET", creatorId, body, expected = [200] } 
 
 const health = await call("/health");
 assert.equal(health.data.ok, true);
-assert.equal(health.data.version, "0.2.0");
-assert.equal(health.data.runtime, "channel-first");
+assert.equal(health.data.version, "0.3.0");
+assert.equal(health.data.runtime, "channel-first-byok");
 assert.equal(health.data.bindings.channelConductor, true);
 assert.equal(health.data.bindings.d1, true);
 assert.equal(health.data.bindings.r2, true);
 assert.equal(health.data.bindings.workersAI, true);
+assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai"]);
 
 for (const [channelId, creatorId] of [
   [channelA, creatorA],
@@ -59,7 +61,42 @@ for (const [channelId, creatorId] of [
   assert.equal(init.data.state.channelId, channelId);
   assert.equal(init.data.state.creatorId, creatorId);
   assert.equal(init.data.state.policy.provider, "fixture");
+  assert.equal(init.data.state.policy.credentialRef, null);
 }
+
+const acceptanceProviderKey = `acceptance-key-${runId}`;
+const providerConfigured = await call(`/api/channels/${channelA}/provider`, {
+  method: "POST",
+  creatorId: creatorA,
+  providerKey: acceptanceProviderKey,
+  body: {
+    provider: "fal-cassetteai",
+    generationCapPerHour: 5,
+    generationCapPerDay: 10,
+  },
+});
+assert.equal(providerConfigured.data.ok, true);
+assert.equal(providerConfigured.data.policy.provider, "fal-cassetteai");
+assert.match(providerConfigured.data.policy.credentialRef, /^fal-cassetteai:sha256:[a-f0-9]{64}$/);
+assert.equal(JSON.stringify(providerConfigured.data).includes(acceptanceProviderKey), false);
+
+const wrongCredential = await call(`/api/channels/${channelA}/generation/next`, {
+  method: "POST",
+  creatorId: creatorA,
+  providerKey: `${acceptanceProviderKey}-wrong`,
+  expected: [400],
+  body: { durationSeconds: 30 },
+});
+assert.equal(wrongCredential.data.error, "credential_scope_violation");
+
+const fixtureRestored = await call(`/api/channels/${channelA}/provider`, {
+  method: "POST",
+  creatorId: creatorA,
+  body: { provider: "fixture" },
+});
+assert.equal(fixtureRestored.data.policy.provider, "fixture");
+assert.equal(fixtureRestored.data.policy.model, "fixture");
+assert.equal(fixtureRestored.data.policy.credentialRef, null);
 
 const promptBody = {
   idempotencyKey: `prompt-${runId}`,
