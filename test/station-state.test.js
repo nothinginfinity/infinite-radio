@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   MUSIC_PROVIDERS,
   assertChannelOwner,
+  assertProviderReady,
   channelAssetKey,
   chooseNextPlayable,
   compileStationBrief,
@@ -345,10 +346,21 @@ test("provider failure marks health degraded without leaking credentials", () =>
   const scheduled = createGenerationJob(selected.state, selected.selected, {
     credentialRef: state.policy.credentialRef,
   });
-  const failed = failGeneration(scheduled.state, scheduled.job.id, "provider_offline");
+  const failed = failGeneration(
+    scheduled.state,
+    scheduled.job.id,
+    "provider_offline",
+    "2026-08-30T20:00:00.000Z",
+  );
   assert.equal(failed.generationJobs[0].status, "failed");
   assert.equal(failed.providerHealth.status, "degraded");
   assert.equal(failed.providerHealth.lastError, "provider_offline");
+  assert.equal(failed.providerHealth.retryAfter, "2026-08-30T20:00:05.000Z");
+  assert.throws(
+    () => assertProviderReady(failed, "2026-08-30T20:00:04.000Z"),
+    /provider_backoff_active/,
+  );
+  assert.equal(assertProviderReady(failed, "2026-08-30T20:00:05.000Z"), true);
   assert.equal(JSON.stringify(failed).includes("raw-secret"), false);
 });
 
