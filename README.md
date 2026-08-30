@@ -1,12 +1,12 @@
 # Infinite Radio
 
-Infinite Radio is a crowd-steered, continuously playing AI music station.
+Infinite Radio is a creator-owned network for continuously playing AI music channels.
 
-Audience prompts become candidates. A conductor selects them, a prompt compiler maps them into the station's current musical identity, generators render short audio segments ahead of playback, and the player crossfades through a ready buffer. CairnStone preserves durable creative state across sessions without forcing the live runtime to carry an ever-growing model context.
+Each creator can launch a channel with its own genre, station bible, audience, provider policy, generation budget, archive, and distribution rules. Audience prompts become candidates inside that channel; a conductor selects them, a prompt compiler maps them into the channel's musical identity, generators render audio ahead of playback, and the player crossfades through a ready buffer. CairnStone preserves durable creative state per channel without forcing the live runtime to carry an ever-growing model context.
 
 ## Product principle
 
-**Do not build one infinitely continued song. Build an infinite radio station whose identity persists.**
+**Do not build one infinitely continued song or one giant shared station. Build a network of creator-controlled channels whose identities persist.**
 
 Generation and playback are separate loops:
 
@@ -20,7 +20,7 @@ The broadcast loop must never block on generation. If the generation queue is la
 
 ## V0.1 scope
 
-The first milestone proves the control loop before adding paid music generation:
+The first milestone proves the control loop before adding paid music generation. That accepted single-station model is the deterministic primitive that later becomes one isolated creator channel:
 
 - deterministic station state
 - prompt queue and selection
@@ -46,19 +46,23 @@ npm run dev
 
 ## Planned platform
 
-- Cloudflare Worker for HTTP/API control plane
-- Durable Object for single-station real-time coordination
-- D1 for prompts, generations, votes, metrics, and metadata
-- R2 for generated audio and DJ assets
+- Cloudflare Worker for the shared HTTP/API control plane
+- one Durable Object conductor per creator channel
+- D1 for channel-scoped prompts, generations, votes, receipts, policies, metrics, and metadata
+- R2 namespaced by channel for generated audio, DJ assets, and distributable artifacts
+- Workers AI for low-cost control intelligence such as prompt compilation, moderation, programming, and DJ copy/TTS where appropriate
+- provider-neutral BYOK music generation so creators can choose providers/models and pay their own generation costs
 - Web Audio API for low-latency browser playback/crossfades
-- fal providers for short music generation
-- CairnStone v7 for accepted station memory, era summaries, creative decisions, and cross-agent handoffs
+- CairnStone v7 for accepted per-channel memory, era summaries, creative decisions, and cross-agent handoffs
+- x402 as a later optional distribution/payment rail for creator-defined access, streams, releases, or licenses
 
 ## Non-goals for V0.1
 
 - 24/7 production broadcast
-- public user accounts
-- payments
+- public creator accounts
+- multi-channel tenancy
+- BYOK credential management
+- x402 payments/distribution
 - long-form songs
 - server-side audio mastering
 - automatic copyright-style imitation
