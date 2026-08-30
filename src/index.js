@@ -53,6 +53,7 @@ function errorResponse(error) {
     "credential_ref_required",
     "provider_key_required",
     "real_provider_required",
+    "fixture_provider_required",
     "prompt_queue_empty",
     "invalid_generated_audio",
   ]);
@@ -564,6 +565,7 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/conductor/tick") {
+        if (state.policy.provider !== MUSIC_PROVIDERS.FIXTURE) throw new Error("fixture_provider_required");
         const body = (await readJson(request)) ?? {};
         const result = ensureFixtureBuffer(state, {
           durationSeconds: body.durationSeconds,
