@@ -29,9 +29,16 @@ Goal: prove the station control model before spending money on generation.
 
 ---
 
-## V0.2 — Channel-first Cloudflare runtime — PLANNED
+## V0.2 — Channel-first Cloudflare runtime — ACTIVE
 
 Goal: turn the accepted single-station control loop into one isolated creator channel while keeping development Cloudflare-native and generation-cost-free.
+
+### Implementation checkpoint — 2026-08-30
+- channel-first runtime, Durable Object conductor, channel-scoped D1/R2 contracts, WebSocket state, idempotent prompt/generation lifecycle, zero-cost WAV fixtures, and optional Workers AI control logic are implemented on `main`
+- D1 `infinite-radio-db` and R2 `infinite-radio-assets` exist; the V0.2 D1 schema is applied and verified remotely
+- source acceptance tests include Durable Object reconstruction, late retry idempotency, ownership/credential isolation, two-channel isolation, actual RIFF/WAV fixture output, Workers AI deterministic fallback, and a 30-minute concurrent fixture simulation
+- exact code checkpoint `9642f4ca70f422cf97ec84ce3adaa0023eb74d90` passed CI run `33337926486`
+- live Worker deployment with the Durable Object migration/bindings is still unverified; V0.2 remains `ACTIVE` until production smoke acceptance closes that boundary
 
 ### Deliverables
 - first-class `channel_id` and creator/channel ownership model
