@@ -16,11 +16,17 @@ The accepted V0.1 architecture proves the control loop before paid music generat
 
 The live/high-frequency data plane belongs in Cloudflare infrastructure. CairnStone is the durable intelligence plane for accepted station identity, era summaries, motifs, creative decisions, policies, and cross-agent handoffs. High-frequency chat, votes, playback events, and telemetry stay out of CairnStone.
 
+## Product discovery update
+
+The accepted single-station state machine remains valid, but the product primitive is now a creator-owned `channel`, not one global station. Each channel will have isolated runtime state, genre/station bible, archive, audience, provider policy, generation budget, provenance, and distribution settings. Cloudflare remains the shared control plane; real music generation is BYOK so creators choose providers/models and bear their own generation cost.
+
+x402 is planned later as an optional channel-owned commerce/distribution rail for explicitly defined resources. Provenance and creator control do not by themselves guarantee copyright ownership; provider/model terms and applicable law remain authoritative for rights questions.
+
 ## Next
 
-V0.2 — Durable single-station conductor.
+V0.2 — Channel-first Cloudflare runtime.
 
-Move in-memory station state into a Durable Object, add D1 schemas for prompts/generations/tracks/votes/provider receipts, define the R2 audio asset contract, add idempotent job lifecycles and WebSocket state, then prove a 30-minute fixture-audio simulation without station stalls.
+Turn the current deterministic station primitive into one isolated channel: one logical Durable Object conductor per `channel_id`, channel-scoped D1/R2 state, fixture/archive audio, Workers AI for inexpensive control intelligence, WebSocket state, and explicit two-channel isolation tests. No paid music-generation API is required for V0.2.
 
 See:
 - `docs/ROADMAP.md`
