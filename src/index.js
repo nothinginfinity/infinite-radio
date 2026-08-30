@@ -53,6 +53,50 @@ function channelRoute(pathname) {
   };
 }
 
+function createSilenceWav(durationSeconds, sampleRate = 8000) {
+  const seconds = Math.max(1, Math.floor(durationSeconds));
+  const dataSize = seconds * sampleRate;
+  const bytes = new Uint8Array(44 + dataSize);
+  const view = new DataView(bytes.buffer);
+  const writeAscii = (offset, value) => {
+    for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataSize, true);
+  bytes.fill(128, 44);
+  return bytes;
+}
+
+async function compileControlBrief(ai, state, prompt) {
+  const deterministic = compileStationBrief(state, prompt);
+  if (!ai?.run) return { source: "deterministic", brief: deterministic };
+  try {
+    const result = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [
+        { role: "system", content: "You are the low-cost control layer for an AI radio channel. Return concise JSON only with keys creative_direction, moderation, and programming_note. Do not imitate living artists by name." },
+        { role: "user", content: JSON.stringify(deterministic) },
+      ],
+      max_tokens: 300,
+      temperature: 0.4,
+    });
+    const text = result?.response ?? result?.result?.response ?? null;
+    return { source: "workers-ai", brief: deterministic, control: typeof text === "string" ? text : JSON.stringify(text ?? result) };
+  } catch (error) {
+    return { source: "deterministic-fallback", brief: deterministic, workers_ai_error: error?.message ?? "workers_ai_failed" };
+  }
+}
+
 async function bestEffort(statementPromise) {
   try {
     return await statementPromise;
@@ -204,14 +248,17 @@ export class ChannelConductor {
       if (this.env.ASSETS) {
         await this.env.ASSETS.put(
           item.track.assetKey,
-          JSON.stringify({
-            schema: "infinite-radio-fixture-v1",
-            channel_id: item.track.channelId,
-            generation_id: item.job.id,
-            prompt_id: item.job.promptId,
-            duration_seconds: item.track.durationSeconds,
-          }),
-          { httpMetadata: { contentType: "application/json" } },
+          createSilenceWav(item.track.durationSeconds),
+          {
+            httpMetadata: { contentType: "audio/wav" },
+            customMetadata: {
+              schema: "infinite-radio-fixture-v1",
+              channel_id: item.track.channelId,
+              generation_id: item.job.id,
+              prompt_id: item.job.promptId,
+              duration_seconds: String(item.track.durationSeconds),
+            },
+          },
         );
       }
     }
@@ -306,9 +353,10 @@ export class ChannelConductor {
 
       if (request.method === "POST" && url.pathname === "/brief") {
         const body = (await readJson(request)) ?? {};
+        const compiled = await compileControlBrief(this.env.AI, state, body.prompt ?? null);
         return json({
           ok: true,
-          brief: compileStationBrief(state, body.prompt ?? null),
+          ...compiled,
           workers_ai_available: Boolean(this.env.AI),
         });
       }
