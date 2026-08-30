@@ -92,6 +92,21 @@ function validateWav(bytes) {
   return text.startsWith("RIFF") && text.slice(8, 12) === "WAVE";
 }
 
+export function safeProviderErrorCode(error) {
+  const known = new Set([
+    "provider_audio_missing",
+    "provider_audio_fetch_failed",
+    "provider_audio_invalid",
+    "provider_offline",
+  ]);
+  if (known.has(error?.message)) return error.message;
+  const status = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
+  if (status === 401 || status === 403) return "provider_auth_failed";
+  if (status === 429) return "provider_rate_limited";
+  if (status >= 500) return "provider_unavailable";
+  return "provider_generation_failed";
+}
+
 export async function runFalCassetteAI({ apiKey, prompt, durationSeconds, clientFactory = createFalClient, fetcher = fetch }) {
   const startedAt = Date.now();
   const client = clientFactory({ credentials: apiKey });
@@ -558,14 +573,15 @@ export class ChannelConductor {
             state: publicState(completed.state),
           }, { status: 201 });
         } catch (error) {
-          const failed = failGeneration(runningState, scheduled.job.id, error?.message ?? "provider_generation_failed");
+          const errorCode = safeProviderErrorCode(error);
+          const failed = failGeneration(runningState, scheduled.job.id, errorCode);
           const retryable = {
             ...failed,
             promptQueue: [selectedResult.selected, ...failed.promptQueue],
           };
           await this.persist(retryable);
-          await this.writeGenerationFailure(scheduled.job, error?.message ?? "provider_generation_failed");
-          throw error;
+          await this.writeGenerationFailure(scheduled.job, errorCode);
+          throw new Error(errorCode);
         }
       }
 
