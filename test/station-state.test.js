@@ -6,6 +6,7 @@ import {
   channelAssetKey,
   chooseNextPlayable,
   compileStationBrief,
+  completeFixtureGeneration,
   createChannelState,
   createGenerationJob,
   createStationState,
@@ -213,4 +214,53 @@ test("channel brief carries continuity and provider policy without raw secrets",
   assert.equal(brief.providerPolicy.credentialRef, "cred:alpha");
   assert.match(brief.instruction, /short radio segment/i);
   assert.equal(JSON.stringify(brief).includes("api_key"), false);
+});
+
+test("late prompt and generation retries remain idempotent after playback consumption", () => {
+  let state = createChannelState({ channelId: "alpha", creatorId: "creator-a" });
+  const first = submitPrompt(state, {
+    idempotencyKey: "late-1",
+    userId: "u1",
+    text: "glass cathedral",
+  });
+  state = first.state;
+
+  const selected = selectNextPrompt(state);
+  state = selected.state;
+  const scheduled = createGenerationJob(state, selected.selected, {
+    now: "2026-08-30T20:00:00.000Z",
+  });
+  state = scheduled.state;
+  const completed = completeFixtureGeneration(state, scheduled.job.id, {
+    now: "2026-08-30T20:00:01.000Z",
+  });
+  state = completed.state;
+  const originalAssetKey = completed.track.assetKey;
+
+  const played = chooseNextPlayable(state);
+  state = { ...played.state, currentTrack: null };
+
+  const promptReplay = submitPrompt(state, {
+    idempotencyKey: "late-1",
+    userId: "u1",
+    text: "glass cathedral",
+  });
+  assert.equal(promptReplay.deduped, true);
+  assert.equal(
+    promptReplay.state.promptQueue.some((p) => p.idempotencyKey === "late-1"),
+    false,
+  );
+
+  const generationReplay = completeFixtureGeneration(
+    promptReplay.state,
+    scheduled.job.id,
+    { now: "2026-08-30T20:05:00.000Z" },
+  );
+  assert.equal(generationReplay.deduped, true);
+  assert.equal(generationReplay.track.assetKey, originalAssetKey);
+  assert.equal(generationReplay.state.readyQueue.length, 0);
+  assert.equal(
+    generationReplay.state.generationJobs.filter((job) => job.id === scheduled.job.id).length,
+    1,
+  );
 });
