@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-V0.2 — Channel-first Cloudflare runtime — ACTIVE / SOURCE + INFRA VERIFIED, LIVE DEPLOY PENDING.
+V0.2 — Channel-first Cloudflare runtime — ACCEPTED / LIVE.
 
 V0.2 has moved the accepted V0.1 control model to a creator-owned channel runtime:
 - one logical `ChannelConductor` Durable Object per `channel_id`
@@ -15,8 +15,11 @@ V0.2 has moved the accepted V0.1 control model to a creator-owned channel runtim
 - optional Workers AI control brief with deterministic fallback
 - concurrent two-channel and 30-minute no-stall simulation coverage
 
-Exact source checkpoint: `9642f4ca70f422cf97ec84ce3adaa0023eb74d90`.
-CI: `33337926486` — success.
+Accepted deployment checkpoint: `54edb80c81f5aa563de1409d23c664f33a8a0e4e`.
+CI: `33339178937` — success.
+Deploy + live acceptance: `33339178936` — success.
+Live Worker: `https://infinite-radio.jaredtechfit.workers.dev`.
+Cloudflare Worker version: `6e060a21-d448-4df2-80c5-c7d4f8d84924`.
 Cloudflare resources: D1 `infinite-radio-db` (`1293ae6e-8caf-4e95-90d8-136945370d33`) and R2 `infinite-radio-assets`; D1 schema verified remotely.
 
 ## Architecture boundary
@@ -31,13 +34,9 @@ x402 is planned later as an optional channel-owned commerce/distribution rail fo
 
 ## Next
 
-Close V0.2 live acceptance without weakening its isolation model:
-1. deploy the Worker with the `ChannelConductor` Durable Object migration plus D1/R2/AI bindings
-2. smoke `/health`, channel init/state, idempotent prompt retry, conductor fixture generation, playback, and a second isolated channel against the live Worker
-3. verify D1/R2 channel-scoped receipts/assets after the live run
-4. only then mark V0.2 `ACCEPTED` and advance the roadmap to V0.3 BYOK music providers
+V0.3 — BYOK music provider layer.
 
-No paid music-generation API is required for the V0.2 acceptance run.
+Preserve V0.2's accepted channel isolation, Durable Object authority, channel-scoped D1/R2 provenance, idempotency, and zero platform-funded music generation while adding the first real creator-supplied music provider adapter.
 
 See:
 - `docs/ROADMAP.md`
