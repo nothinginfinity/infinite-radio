@@ -3,6 +3,7 @@ import { createFalClient } from "@fal-ai/client";
 import {
   MUSIC_PROVIDERS,
   assertChannelOwner,
+  assertProviderReady,
   channelAssetKey,
   chooseNextPlayable,
   compileStationBrief,
@@ -52,6 +53,7 @@ function errorResponse(error) {
     "music_provider_unsupported",
     "credential_ref_required",
     "provider_key_required",
+    "provider_backoff_active",
     "real_provider_required",
     "fixture_provider_required",
     "prompt_queue_empty",
@@ -117,6 +119,8 @@ export async function runFalCassetteAI({ apiKey, prompt, durationSeconds, client
       provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
       model: "CassetteAI/music-generator",
       pricing_basis: "fal published $0.02 per output minute",
+      terms_uri: "https://fal.ai/legal/terms-of-service",
+      api_terms_uri: "https://fal.ai/legal/api-services",
       source_host: new URL(sourceUrl).hostname,
     },
   };
@@ -332,10 +336,10 @@ export class ChannelConductor {
       await bestEffort(
         this.env.DB.prepare(
           `INSERT OR REPLACE INTO provider_receipts
-            (receipt_id, channel_id, generation_id, provider, model, provider_request_id, duration_seconds, latency_ms, cost_microusd, provenance_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (receipt_id, channel_id, generation_id, provider, model, provider_request_id, duration_seconds, latency_ms, cost_microusd, terms_uri, provenance_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(receipt.receiptId, track.channelId, job.id, job.provider, job.model, receipt.providerRequestId, track.durationSeconds, receipt.latencyMs, receipt.costMicrousd, JSON.stringify(receipt.provenance), track.createdAt)
+          .bind(receipt.receiptId, track.channelId, job.id, job.provider, job.model, receipt.providerRequestId, track.durationSeconds, receipt.latencyMs, receipt.costMicrousd, receipt.provenance?.terms_uri ?? null, JSON.stringify(receipt.provenance), track.createdAt)
           .run(),
       );
     }
@@ -493,6 +497,7 @@ export class ChannelConductor {
         if (!rawKey) throw new Error("provider_key_required");
         const expectedRef = await credentialRefFor(state.policy.provider, rawKey);
         if (expectedRef !== state.policy.credentialRef) throw new Error("credential_scope_violation");
+        assertProviderReady(state);
         const selectedResult = selectNextPrompt(state);
         if (!selectedResult.selected) throw new Error("prompt_queue_empty");
         const body = (await readJson(request)) ?? {};
