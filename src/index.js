@@ -1,11 +1,21 @@
+import { createFalClient } from "@fal-ai/client";
+
 import {
+  MUSIC_PROVIDERS,
   assertChannelOwner,
+  channelAssetKey,
   chooseNextPlayable,
   compileStationBrief,
+  completeMusicGeneration,
   createChannelState,
+  createGenerationJob,
   ensureFixtureBuffer,
+  failGeneration,
+  markGenerationRunning,
   readyBufferSeconds,
+  selectNextPrompt,
   submitPrompt,
+  updateChannelPolicy,
 } from "./station-state.js";
 
 function json(data, init = {}) {
@@ -37,6 +47,14 @@ function errorResponse(error) {
     "channel_scope_violation",
     "credential_scope_violation",
     "generation_cap_reached",
+    "daily_generation_cap_reached",
+    "raw_provider_secret_forbidden",
+    "music_provider_unsupported",
+    "credential_ref_required",
+    "provider_key_required",
+    "real_provider_required",
+    "prompt_queue_empty",
+    "invalid_generated_audio",
   ]);
   return json(
     { ok: false, error: error?.message ?? "internal_error" },
@@ -50,6 +68,56 @@ function channelRoute(pathname) {
   return {
     channelId: decodeURIComponent(match[1]),
     tail: match[2] || "/state",
+  };
+}
+
+function bytesToHex(bytes) {
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export async function credentialRefFor(provider, rawKey) {
+  const normalizedProvider = String(provider ?? "").trim();
+  const normalizedKey = String(rawKey ?? "").trim();
+  if (!normalizedProvider || !normalizedKey) throw new Error("provider_key_required");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalizedKey));
+  return `${normalizedProvider}:sha256:${bytesToHex(new Uint8Array(digest))}`;
+}
+
+function validateWav(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 44) return false;
+  const text = new TextDecoder().decode(bytes.slice(0, 12));
+  return text.startsWith("RIFF") && text.slice(8, 12) === "WAVE";
+}
+
+export async function runFalCassetteAI({ apiKey, prompt, durationSeconds, clientFactory = createFalClient, fetcher = fetch }) {
+  const startedAt = Date.now();
+  const client = clientFactory({ credentials: apiKey });
+  const result = await client.subscribe("CassetteAI/music-generator", {
+    input: {
+      prompt,
+      duration: Math.max(5, Math.min(180, Math.round(durationSeconds))),
+    },
+  });
+  const sourceUrl = result?.data?.audio_file?.url;
+  if (!sourceUrl) throw new Error("provider_audio_missing");
+  const audioResponse = await fetcher(sourceUrl);
+  if (!audioResponse.ok) throw new Error("provider_audio_fetch_failed");
+  const bytes = new Uint8Array(await audioResponse.arrayBuffer());
+  if (!validateWav(bytes)) throw new Error("provider_audio_invalid");
+  const duration = Math.max(5, Math.min(180, Math.round(durationSeconds)));
+  return {
+    bytes,
+    contentType: audioResponse.headers.get("content-type") || "audio/wav",
+    providerRequestId: result.requestId ?? null,
+    durationSeconds: duration,
+    latencyMs: Date.now() - startedAt,
+    costMicrousd: Math.ceil((duration / 60) * 20000),
+    provenance: {
+      provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
+      model: "CassetteAI/music-generator",
+      pricing_basis: "fal published $0.02 per output minute",
+      source_host: new URL(sourceUrl).hostname,
+    },
   };
 }
 
@@ -142,6 +210,33 @@ export class ChannelConductor {
     }
   }
 
+  async generateWithProvider(state, prompt, rawKey, durationSeconds) {
+    if (state.policy.provider !== MUSIC_PROVIDERS.FAL_CASSETTEAI) {
+      throw new Error("music_provider_unsupported");
+    }
+    const expectedRef = await credentialRefFor(state.policy.provider, rawKey);
+    if (expectedRef !== state.policy.credentialRef) throw new Error("credential_scope_violation");
+    const brief = compileStationBrief(state, prompt);
+    const providerPrompt = [
+      brief.listenerPrompt,
+      `Channel identity: ${brief.continuity.identity}`,
+      `Era: ${brief.continuity.era}`,
+      `Genres: ${(brief.continuity.genreTags ?? []).join(", ")}`,
+      `Tempo: ${(brief.continuity.tempoRange ?? []).join("-")} BPM`,
+      "Create an original track. Do not imitate a living artist by name.",
+    ].filter(Boolean).join("\n");
+    if (this.env.MUSIC_PROVIDER?.generate) {
+      return this.env.MUSIC_PROVIDER.generate({
+        provider: state.policy.provider,
+        model: state.policy.model,
+        apiKey: rawKey,
+        prompt: providerPrompt,
+        durationSeconds,
+      });
+    }
+    return runFalCassetteAI({ apiKey: rawKey, prompt: providerPrompt, durationSeconds });
+  }
+
   async writeChannelMetadata(state) {
     if (!this.env.DB) return;
     const now = new Date().toISOString();
@@ -164,12 +259,14 @@ export class ChannelConductor {
     await bestEffort(
       this.env.DB.prepare(
         `INSERT INTO channel_policies
-          (channel_id, buffer_target_seconds, generation_cap_per_hour, provider, credential_ref, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+          (channel_id, buffer_target_seconds, generation_cap_per_hour, generation_cap_per_day, provider, model, credential_ref, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(channel_id) DO UPDATE SET
            buffer_target_seconds = excluded.buffer_target_seconds,
            generation_cap_per_hour = excluded.generation_cap_per_hour,
+           generation_cap_per_day = excluded.generation_cap_per_day,
            provider = excluded.provider,
+           model = excluded.model,
            credential_ref = excluded.credential_ref,
            updated_at = excluded.updated_at`,
       )
@@ -177,7 +274,9 @@ export class ChannelConductor {
           state.channelId,
           state.policy.bufferTargetSeconds,
           state.policy.generationCapPerHour,
+          state.policy.generationCapPerDay,
           state.policy.provider,
+          state.policy.model,
           state.policy.credentialRef,
           now,
         )
@@ -206,14 +305,63 @@ export class ChannelConductor {
     );
   }
 
+  async writeProviderArtifact({ job, track, receipt }) {
+    if (this.env.DB) {
+      await bestEffort(
+        this.env.DB.prepare(
+          `INSERT INTO generations
+            (generation_id, channel_id, prompt_id, idempotency_key, provider, model, credential_ref, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)
+           ON CONFLICT(generation_id) DO UPDATE SET
+             status = 'ready', model = excluded.model, updated_at = excluded.updated_at`,
+        )
+          .bind(job.id, job.channelId, job.promptId, job.idempotencyKey, job.provider, job.model, job.credentialRef, job.createdAt, track.createdAt)
+          .run(),
+      );
+      await bestEffort(
+        this.env.DB.prepare(
+          `INSERT INTO tracks
+            (track_id, channel_id, generation_id, asset_key, duration_seconds, provider, model, content_type, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(track_id) DO UPDATE SET asset_key = excluded.asset_key`,
+        )
+          .bind(track.id, track.channelId, track.generationJobId, track.assetKey, track.durationSeconds, track.provider, track.model, track.contentType, track.createdAt)
+          .run(),
+      );
+      await bestEffort(
+        this.env.DB.prepare(
+          `INSERT OR REPLACE INTO provider_receipts
+            (receipt_id, channel_id, generation_id, provider, model, provider_request_id, duration_seconds, latency_ms, cost_microusd, provenance_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(receipt.receiptId, track.channelId, job.id, job.provider, job.model, receipt.providerRequestId, track.durationSeconds, receipt.latencyMs, receipt.costMicrousd, JSON.stringify(receipt.provenance), track.createdAt)
+          .run(),
+      );
+    }
+  }
+
+  async writeGenerationFailure(job, errorCode) {
+    if (!this.env.DB) return;
+    await bestEffort(
+      this.env.DB.prepare(
+        `INSERT INTO generations
+          (generation_id, channel_id, prompt_id, idempotency_key, provider, model, credential_ref, status, error_code, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)
+         ON CONFLICT(generation_id) DO UPDATE SET status = 'failed', error_code = excluded.error_code, updated_at = excluded.updated_at`,
+      )
+        .bind(job.id, job.channelId, job.promptId, job.idempotencyKey, job.provider, job.model, job.credentialRef, errorCode, job.createdAt, new Date().toISOString())
+        .run(),
+    );
+  }
+
   async writeFixtureArtifacts(created) {
     for (const item of created) {
       if (this.env.DB) {
         await bestEffort(
           this.env.DB.prepare(
             `INSERT OR IGNORE INTO generations
-              (generation_id, channel_id, prompt_id, idempotency_key, provider, credential_ref, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?)`,
+              (generation_id, channel_id, prompt_id, idempotency_key, provider, model, credential_ref, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`,
           )
             .bind(
               item.job.id,
@@ -221,6 +369,7 @@ export class ChannelConductor {
               item.job.promptId,
               item.job.idempotencyKey,
               item.job.provider,
+              item.job.model,
               item.job.credentialRef,
               item.job.createdAt,
               item.track.createdAt,
@@ -230,8 +379,8 @@ export class ChannelConductor {
         await bestEffort(
           this.env.DB.prepare(
             `INSERT OR IGNORE INTO tracks
-              (track_id, channel_id, generation_id, asset_key, duration_seconds, provider, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              (track_id, channel_id, generation_id, asset_key, duration_seconds, provider, model, content_type, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
             .bind(
               item.track.id,
@@ -240,6 +389,8 @@ export class ChannelConductor {
               item.track.assetKey,
               item.track.durationSeconds,
               item.track.provider,
+              item.job.model,
+              "audio/wav",
               item.track.createdAt,
             )
             .run(),
@@ -288,14 +439,7 @@ export class ChannelConductor {
         let state = await this.load(channelId, requestedCreatorId);
         assertChannelOwner(state, requestedCreatorId);
         if (body.policy) {
-          state = {
-            ...state,
-            policy: {
-              ...state.policy,
-              ...body.policy,
-              provider: "fixture",
-            },
-          };
+          state = updateChannelPolicy(state, { ...body.policy, provider: MUSIC_PROVIDERS.FIXTURE, credentialRef: null });
           await this.persist(state);
         }
         await this.writeChannelMetadata(state);
@@ -309,6 +453,28 @@ export class ChannelConductor {
         return json({ ok: true, state: publicState(state) });
       }
 
+      if (request.method === "POST" && url.pathname === "/provider") {
+        const body = (await readJson(request)) ?? {};
+        const provider = body.provider ?? MUSIC_PROVIDERS.FIXTURE;
+        let credentialRef = null;
+        if (provider !== MUSIC_PROVIDERS.FIXTURE) {
+          const rawKey = request.headers.get("x-provider-key");
+          if (!rawKey) throw new Error("provider_key_required");
+          credentialRef = await credentialRefFor(provider, rawKey);
+        }
+        const next = updateChannelPolicy(state, {
+          provider,
+          model: body.model,
+          credentialRef,
+          generationCapPerHour: body.generationCapPerHour,
+          generationCapPerDay: body.generationCapPerDay,
+          bufferTargetSeconds: body.bufferTargetSeconds,
+        });
+        await this.persist(next);
+        await this.writeChannelMetadata(next);
+        return json({ ok: true, policy: next.policy });
+      }
+
       if (request.method === "POST" && url.pathname === "/prompts") {
         const body = (await readJson(request)) ?? {};
         const result = submitPrompt(state, body);
@@ -318,6 +484,83 @@ export class ChannelConductor {
           { ok: true, deduped: result.deduped, prompt: result.prompt },
           { status: result.deduped ? 200 : 202 },
         );
+      }
+
+      if (request.method === "POST" && url.pathname === "/generation/next") {
+        if (state.policy.provider === MUSIC_PROVIDERS.FIXTURE) throw new Error("real_provider_required");
+        const rawKey = request.headers.get("x-provider-key");
+        if (!rawKey) throw new Error("provider_key_required");
+        const expectedRef = await credentialRefFor(state.policy.provider, rawKey);
+        if (expectedRef !== state.policy.credentialRef) throw new Error("credential_scope_violation");
+        const selectedResult = selectNextPrompt(state);
+        if (!selectedResult.selected) throw new Error("prompt_queue_empty");
+        const body = (await readJson(request)) ?? {};
+        const scheduled = createGenerationJob(selectedResult.state, selectedResult.selected, {
+          credentialRef: state.policy.credentialRef,
+        });
+        const runningState = markGenerationRunning(scheduled.state, scheduled.job.id);
+        await this.persist(runningState);
+        try {
+          const generated = await this.generateWithProvider(
+            runningState,
+            selectedResult.selected,
+            rawKey,
+            body.durationSeconds ?? 30,
+          );
+          const assetKey = channelAssetKey(state.channelId, `generated/${scheduled.job.id}.wav`);
+          await this.env.ASSETS.put(assetKey, generated.bytes, {
+            httpMetadata: { contentType: generated.contentType || "audio/wav" },
+            customMetadata: {
+              schema: "infinite-radio-generated-v1",
+              channel_id: state.channelId,
+              generation_id: scheduled.job.id,
+              prompt_id: scheduled.job.promptId,
+              provider: scheduled.job.provider,
+              model: scheduled.job.model,
+            },
+          });
+          const receiptId = `receipt:${scheduled.job.id}`;
+          const completed = completeMusicGeneration(runningState, scheduled.job.id, {
+            assetKey,
+            durationSeconds: generated.durationSeconds,
+            contentType: generated.contentType || "audio/wav",
+            receiptId,
+          });
+          await this.persist(completed.state);
+          await this.writeProviderArtifact({
+            job: scheduled.job,
+            track: completed.track,
+            receipt: {
+              receiptId,
+              providerRequestId: generated.providerRequestId,
+              latencyMs: generated.latencyMs,
+              costMicrousd: generated.costMicrousd,
+              provenance: generated.provenance,
+            },
+          });
+          return json({
+            ok: true,
+            generation_id: scheduled.job.id,
+            track: completed.track,
+            receipt: {
+              receipt_id: receiptId,
+              provider_request_id: generated.providerRequestId,
+              latency_ms: generated.latencyMs,
+              cost_microusd: generated.costMicrousd,
+              provenance: generated.provenance,
+            },
+            state: publicState(completed.state),
+          }, { status: 201 });
+        } catch (error) {
+          const failed = failGeneration(runningState, scheduled.job.id, error?.message ?? "provider_generation_failed");
+          const retryable = {
+            ...failed,
+            promptQueue: [selectedResult.selected, ...failed.promptQueue],
+          };
+          await this.persist(retryable);
+          await this.writeGenerationFailure(scheduled.job, error?.message ?? "provider_generation_failed");
+          throw error;
+        }
       }
 
       if (request.method === "POST" && url.pathname === "/conductor/tick") {
@@ -379,6 +622,9 @@ function publicState(state) {
     readyQueue: state.readyQueue,
     promptQueue: state.promptQueue,
     generationJobs: state.generationJobs,
+    generationWindow: state.generationWindow,
+    generationDayWindow: state.generationDayWindow,
+    providerHealth: state.providerHealth,
     archive: state.archive,
     policy: state.policy,
     bible: state.bible,
@@ -412,14 +658,15 @@ export default {
       return json({
         ok: true,
         service: "infinite-radio",
-        version: "0.2.0",
-        runtime: "channel-first",
+        version: "0.3.0",
+        runtime: "channel-first-byok",
         bindings: {
           channelConductor: Boolean(env.CHANNEL_CONDUCTOR),
           d1: Boolean(env.DB),
           r2: Boolean(env.ASSETS),
           workersAI: Boolean(env.AI),
         },
+        musicProviders: [MUSIC_PROVIDERS.FIXTURE, MUSIC_PROVIDERS.FAL_CASSETTEAI],
       });
     }
 
@@ -432,12 +679,14 @@ export default {
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Infinite Radio</title></head>
 <body style="font-family:system-ui;background:#09090b;color:#fafafa;max-width:820px;margin:60px auto;padding:24px">
-  <p>◉ LIVE SYSTEM / V0.2 CHANNEL RUNTIME</p>
+  <p>◉ LIVE SYSTEM / V0.3 BYOK MUSIC PROVIDER</p>
   <h1>Infinite Radio</h1>
-  <p>A creator-owned network of isolated AI radio channels. V0.2 runs fixture generation at zero music-generation cost.</p>
+  <p>A creator-owned network of isolated AI radio channels. V0.3 adds provider-neutral BYOK music generation while retaining fixture fallback.</p>
   <pre>POST /api/channels/:channel_id/init
 GET  /api/channels/:channel_id/state
 POST /api/channels/:channel_id/prompts
+POST /api/channels/:channel_id/provider
+POST /api/channels/:channel_id/generation/next
 POST /api/channels/:channel_id/conductor/tick
 POST /api/channels/:channel_id/playback/next
 GET  /api/channels/:channel_id/ws</pre>
