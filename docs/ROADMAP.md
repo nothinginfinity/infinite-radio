@@ -66,9 +66,20 @@ Goal: turn the accepted single-station control loop into one isolated creator ch
 
 ---
 
-## V0.3 — BYOK music provider layer — PLANNED
+## V0.3 — BYOK music provider layer — ACTIVE
 
 Goal: let a channel creator opt into real music generation without making Infinite Radio subsidize GPU usage or hard-wire one vendor.
+
+### Implementation checkpoint — 2026-08-30
+- provider-neutral generation contract is wired through channel policy and a request-scoped adapter boundary; `fal-cassetteai` / CassetteAI Music Generator is the first external adapter while `fixture` remains the zero-cost fallback
+- BYOK keys are request-only: the Worker stores a SHA-256 credential reference, never the raw key; wrong-key calls fail before provider invocation, provider error strings are normalized before persistence, invocation logs are disabled, and automatic traces are disabled for this Worker
+- D1 migration `0002_v03_byok_provider.sql` adds provider model/error fields, daily caps, track content metadata, and normalized receipt fields for duration/cost/terms provenance
+- successful generated audio is WAV-validated before READY, stored under `channels/{channel_id}/generated/...`, and retained in that channel archive for provider-outage playback fallback
+- provider health uses exponential retry backoff (5s doubling to a 5-minute cap), with hourly and rolling-24-hour channel generation ceilings
+- receipts normalize duration, latency, estimated provider cost, provider request ID, model, pricing provenance, and current fal Terms/API Terms URIs
+- exact source checkpoint `88a94f20b6d88a8e3a42feacc7a46473709f63bc` passed CI `33342391862` and deploy + live V0.3 boundary acceptance `33342391857`
+- live acceptance proves V0.3 health, disposable-key fingerprinting without secret echo, wrong-key rejection before generation, credential clearing on fixture rollback, plus all retained V0.2 creator/channel isolation checks
+- **remaining acceptance evidence:** one creator-supplied fal BYOK key must execute a real external generation so playable provider audio, real provider request ID, latency, and cost attribution can be observed end-to-end; V0.3 stays `ACTIVE` until that evidence exists
 
 ### Deliverables
 - provider-neutral `MusicGenerator` interface
