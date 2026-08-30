@@ -29,45 +29,53 @@ Goal: prove the station control model before spending money on generation.
 
 ---
 
-## V0.2 — Durable single-station conductor — PLANNED
+## V0.2 — Channel-first Cloudflare runtime — PLANNED
 
-Goal: move mutable station state out of Worker process memory.
+Goal: turn the accepted single-station control loop into one isolated creator channel while keeping development Cloudflare-native and generation-cost-free.
 
 ### Deliverables
-- Durable Object `StationConductor`
-- D1 schema for prompts, generations, tracks, votes, provider receipts
-- R2 bucket contract for audio assets
-- idempotent prompt submission
-- generation-job lifecycle: `candidate -> selected -> generating -> validating -> ready | failed`
-- WebSocket station-state updates
-- configurable buffer target and generation cap
+- first-class `channel_id` and creator/channel ownership model
+- Durable Object `ChannelConductor`, one logical conductor per channel
+- D1 schema for creators, channels, memberships, prompts, generations, tracks, votes, policies, and provider receipts with channel scoping
+- R2 namespace contract: `channels/{channel_id}/...`
+- idempotent prompt submission and generation-job lifecycle
+- WebSocket channel-state updates
+- configurable per-channel buffer target and generation cap
+- fixture/archive audio provider for zero-cost simulation
+- Workers AI control layer for prompt compilation/moderation/programming and optional DJ copy/TTS where appropriate
+- explicit tenant-isolation tests
 
 ### Acceptance
-- Worker restart does not lose authoritative station state
+- Worker restart does not lose authoritative channel state
 - duplicate submissions/retries do not duplicate generation jobs
-- conductor can simulate a 30-minute station using fixture audio with no stalls
+- two simulated channels can run concurrently without queue/state/asset crossover
+- one channel cannot consume another channel's budget or credential reference
+- one channel can simulate 30 minutes of fixture audio with no stalls
+- no paid music-generation API is required
 
 ---
 
-## V0.3 — First real music generation — PLANNED
+## V0.3 — BYOK music provider layer — PLANNED
 
-Goal: make a live short-form audio segment from a listener prompt.
+Goal: let a channel creator opt into real music generation without making Infinite Radio subsidize GPU usage or hard-wire one vendor.
 
 ### Deliverables
 - provider-neutral `MusicGenerator` interface
-- first fal adapter
-- secret/config isolation
-- duration/latency/cost receipt normalization
-- R2 asset ingestion
-- retry/backoff policy
-- hard per-minute and daily cost ceiling
-- provider health telemetry
+- channel-scoped provider/model policy
+- opaque credential-reference contract; raw BYOK secrets never enter D1/R2/CairnStone/logs
+- first external BYOK music adapter selected for lowest practical complexity/cost
+- duration/latency/cost/provenance receipt normalization
+- R2 asset ingestion under the authorized channel namespace
+- retry/backoff and provider-health policy
+- hard per-channel hourly/daily generation ceilings
+- explicit provider-terms/provenance capture
 
 ### Acceptance
-- real prompt generates a playable asset
+- a creator-authorized real prompt generates a playable asset for the correct channel
 - asset reaches READY only after validation
-- provider outage exercises archive fallback
-- cost and latency are measurable per generation
+- provider outage exercises that channel's archive fallback
+- cost and latency are measurable per generation and attributable to the correct channel
+- a channel cannot invoke another channel's credential reference
 
 ---
 
@@ -92,7 +100,28 @@ Goal: make the station feel live.
 
 ---
 
-## V0.5 — Crowd steering — PLANNED
+## V0.5 — Creator accounts + multi-channel management — PLANNED
+
+Goal: let one creator own and operate one or many distinct channels without weakening tenant isolation.
+
+### Deliverables
+- creator account/session model
+- create/edit/archive channel lifecycle
+- channel slug/identity/visibility settings
+- creator dashboard with multiple channels
+- channel-specific genre/station bible controls
+- channel-specific provider/budget policy
+- owner/member authorization boundaries
+- import/export of channel configuration without raw secrets
+
+### Acceptance
+- one creator can operate multiple channels independently
+- two different creators cannot read or mutate each other's private channel state
+- deleting/archiving one channel cannot damage another
+
+---
+
+## V0.6 — Crowd steering — PLANNED
 
 Goal: turn the station into a game.
 
@@ -113,7 +142,7 @@ Goal: turn the station into a game.
 
 ---
 
-## V0.6 — DJ transitions + station personality — PLANNED
+## V0.7 — DJ transitions + channel personality — PLANNED
 
 Goal: hide discontinuities by making them entertainment.
 
@@ -131,13 +160,13 @@ Goal: hide discontinuities by making them entertainment.
 
 ---
 
-## V0.7 — CairnStone station memory — PLANNED
+## V0.8 — CairnStone channel memory — PLANNED
 
-Goal: make the station become more coherent over time without an ever-growing context window.
+Goal: let each creator channel become more coherent over time without an ever-growing context window or cross-channel leakage.
 
 ### Deliverables
-- dedicated CairnStone station-memory chain
-- accepted station-bible path
+- channel-scoped CairnStone memory chain/policy
+- accepted channel-bible path
 - era-summary schema
 - motif/character history
 - creative-decision stones
@@ -148,11 +177,12 @@ Goal: make the station become more coherent over time without an ever-growing co
 ### Acceptance
 - a fresh agent/client can reconstruct current creative identity from accepted state
 - 10,000 historical prompts do not need to enter the active model context
-- station history remains queryable by era/motif/character
+- channel history remains queryable by era/motif/character
+- one channel's context package contains no private memory from another channel
 
 ---
 
-## V0.8 — Multi-provider quality routing — PLANNED
+## V0.9 — Multi-provider quality routing — PLANNED
 
 Goal: route cheap filler and premium feature tracks differently.
 
@@ -167,7 +197,7 @@ Goal: route cheap filler and premium feature tracks differently.
 
 ---
 
-## V0.9 — Program intelligence — PLANNED
+## V0.10 — Program intelligence — PLANNED
 
 Goal: let audience response shape programming.
 
@@ -181,28 +211,51 @@ Goal: let audience response shape programming.
 
 ---
 
-## V1.0 — 24/7 public station — PLANNED
+## V0.11 — Creator distribution + x402 commerce — PLANNED
 
-Goal: production launch.
+Goal: let creators selectively distribute or sell access to artifacts and channel resources they funded, without coupling playback uptime to payment infrastructure.
+
+### Deliverables
+- creator-defined public/private/premium distribution policy
+- immutable release manifest tying asset -> channel -> generation provenance -> provider receipt
+- x402 resource contract for explicitly priced resources
+- candidate resources: premium stream access, track/release download, remix/use offer, agent-accessible catalog/API
+- settlement/access receipts separated from creative provenance
+- revocation/expiry policy where the resource type permits it
+- no claim that platform provenance alone creates copyright ownership
+
+### Acceptance
+- creator can publish a clearly defined paid test resource from their own channel
+- successful payment grants only the advertised resource/access
+- payment failure never stops a free/public channel from broadcasting
+- another creator cannot monetize an asset outside their authorization boundary
+
+---
+
+## V1.0 — Multi-channel creator network — PLANNED
+
+Goal: production launch as a network capable of hosting many independent creator channels.
 
 ### Deliverables
 - production observability
-- moderation/admin console
+- creator/channel administration and moderation console
 - abuse handling
-- asset retention policy
-- cost alarms
+- channel-scoped asset retention policy
+- channel/provider cost alarms
 - multi-region/recovery strategy where needed
-- polished listener UX
-- optional synchronized HLS/Icecast/RTMP output
-- documented provider/legal/attribution policies
+- discovery/listener UX for many channels
+- optional synchronized HLS/Icecast/RTMP output per channel
+- documented provider/legal/attribution/provenance policies
+- scale tests proving tenant isolation under many active channels
 
 ### Launch invariant
 
-The station keeps playing even when:
-- chat is empty
+Each channel keeps playing even when:
+- its chat is empty
 - a generation fails
-- a provider is down
+- its configured provider is down
 - the LLM control layer is unavailable
 - CairnStone is temporarily unreachable
+- x402/payment infrastructure is unavailable
 
-The intelligence layer improves the broadcast; it is never allowed to become the only thing keeping audio alive.
+Failure or overload in one channel must not stop unrelated channels. The intelligence and commerce layers improve the network; neither is allowed to become the only thing keeping audio alive.
