@@ -1,6 +1,12 @@
 export const DEFAULT_BUFFER_TARGET_SECONDS = 90;
 export const DEFAULT_GENERATION_CAP_PER_HOUR = 120;
+export const DEFAULT_GENERATION_CAP_PER_DAY = 500;
 export const DEFAULT_FIXTURE_TRACK_SECONDS = 30;
+
+export const MUSIC_PROVIDERS = Object.freeze({
+  FIXTURE: "fixture",
+  FAL_CASSETTEAI: "fal-cassetteai",
+});
 
 function requiredId(value, code) {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -14,10 +20,50 @@ function clone(value) {
   return structuredClone(value);
 }
 
+function defaultProviderModel(provider) {
+  return provider === MUSIC_PROVIDERS.FAL_CASSETTEAI
+    ? "cassetteai/music-generator"
+    : "fixture";
+}
+
+function assertNoRawCredentialFields(policy) {
+  const forbidden = ["apiKey", "api_key", "token", "accessToken", "secret", "credential"];
+  if (forbidden.some((key) => Object.prototype.hasOwnProperty.call(policy ?? {}, key))) {
+    throw new Error("raw_provider_secret_forbidden");
+  }
+}
+
+function normalizePolicy(current, update = {}) {
+  assertNoRawCredentialFields(update);
+  const provider = update.provider ?? current.provider ?? MUSIC_PROVIDERS.FIXTURE;
+  if (!Object.values(MUSIC_PROVIDERS).includes(provider)) {
+    throw new Error("music_provider_unsupported");
+  }
+  const credentialRef = update.credentialRef ?? current.credentialRef ?? null;
+  if (provider !== MUSIC_PROVIDERS.FIXTURE && !credentialRef) {
+    throw new Error("credential_ref_required");
+  }
+  const bufferTargetSeconds = update.bufferTargetSeconds ?? current.bufferTargetSeconds ?? DEFAULT_BUFFER_TARGET_SECONDS;
+  const generationCapPerHour = update.generationCapPerHour ?? current.generationCapPerHour ?? DEFAULT_GENERATION_CAP_PER_HOUR;
+  const generationCapPerDay = update.generationCapPerDay ?? current.generationCapPerDay ?? DEFAULT_GENERATION_CAP_PER_DAY;
+  if (!Number.isFinite(bufferTargetSeconds) || bufferTargetSeconds <= 0) throw new Error("invalid_buffer_target");
+  if (!Number.isInteger(generationCapPerHour) || generationCapPerHour <= 0) throw new Error("invalid_generation_cap");
+  if (!Number.isInteger(generationCapPerDay) || generationCapPerDay <= 0) throw new Error("invalid_generation_cap");
+  if (generationCapPerDay < generationCapPerHour) throw new Error("daily_cap_below_hourly_cap");
+  return {
+    bufferTargetSeconds,
+    generationCapPerHour,
+    generationCapPerDay,
+    provider,
+    model: update.model ?? current.model ?? defaultProviderModel(provider),
+    credentialRef,
+  };
+}
+
 export function createChannelState(overrides = {}) {
   const channelId = requiredId(overrides.channelId ?? "main", "channel_id_required");
   const creatorId = requiredId(overrides.creatorId ?? "local-dev", "creator_id_required");
-  const policy = overrides.policy ?? {};
+  const policy = normalizePolicy({}, overrides.policy ?? {});
 
   return {
     schemaVersion: 2,
@@ -31,16 +77,9 @@ export function createChannelState(overrides = {}) {
     promptLedger: clone(overrides.promptLedger ?? overrides.promptQueue ?? []),
     generationJobs: clone(overrides.generationJobs ?? []),
     archive: clone(overrides.archive ?? []),
-    policy: {
-      bufferTargetSeconds:
-        policy.bufferTargetSeconds ??
-        overrides.bufferTargetSeconds ??
-        DEFAULT_BUFFER_TARGET_SECONDS,
-      generationCapPerHour:
-        policy.generationCapPerHour ?? DEFAULT_GENERATION_CAP_PER_HOUR,
-      provider: policy.provider ?? "fixture",
-      credentialRef: policy.credentialRef ?? null,
-    },
+    policy: normalizePolicy(policy, {
+      bufferTargetSeconds: overrides.bufferTargetSeconds ?? policy.bufferTargetSeconds,
+    }),
     bible: {
       identity:
         overrides.bible?.identity ??
@@ -62,6 +101,16 @@ export function createChannelState(overrides = {}) {
       startedAt: overrides.generationWindow?.startedAt ?? null,
       count: overrides.generationWindow?.count ?? 0,
     },
+    generationDayWindow: {
+      startedAt: overrides.generationDayWindow?.startedAt ?? null,
+      count: overrides.generationDayWindow?.count ?? 0,
+    },
+    providerHealth: clone(overrides.providerHealth ?? {
+      status: "healthy",
+      consecutiveFailures: 0,
+      lastError: null,
+      checkedAt: null,
+    }),
     counters: {
       promptsAccepted: overrides.counters?.promptsAccepted ?? 0,
       promptReplays: overrides.counters?.promptReplays ?? 0,
@@ -81,6 +130,13 @@ export function createStationState(overrides = {}) {
     creatorId: overrides.creatorId ?? "local-dev",
     ...overrides,
   });
+}
+
+export function updateChannelPolicy(state, update = {}) {
+  return {
+    ...state,
+    policy: normalizePolicy(state.policy, update),
+  };
 }
 
 export function assertChannelOwner(state, creatorId) {
@@ -226,6 +282,17 @@ function generationWindowFor(state, now) {
   return state.generationWindow;
 }
 
+function generationDayWindowFor(state, now) {
+  const timestamp = new Date(now ?? Date.now()).getTime();
+  const start = state.generationDayWindow?.startedAt
+    ? new Date(state.generationDayWindow.startedAt).getTime()
+    : null;
+  if (!start || timestamp - start >= 24 * 60 * 60 * 1000) {
+    return { startedAt: new Date(timestamp).toISOString(), count: 0 };
+  }
+  return state.generationDayWindow;
+}
+
 export function createGenerationJob(state, selectedPrompt, options = {}) {
   if (!selectedPrompt?.id) throw new Error("selected_prompt_required");
   if (selectedPrompt.channelId && selectedPrompt.channelId !== state.channelId) {
@@ -257,8 +324,12 @@ export function createGenerationJob(state, selectedPrompt, options = {}) {
   }
 
   const window = generationWindowFor(state, options.now);
+  const dayWindow = generationDayWindowFor(state, options.now);
   if (window.count >= state.policy.generationCapPerHour) {
     throw new Error("generation_cap_reached");
+  }
+  if (dayWindow.count >= state.policy.generationCapPerDay) {
+    throw new Error("daily_generation_cap_reached");
   }
 
   const job = {
@@ -267,6 +338,7 @@ export function createGenerationJob(state, selectedPrompt, options = {}) {
     idempotencyKey,
     promptId: selectedPrompt.id,
     provider: state.policy.provider,
+    model: state.policy.model,
     credentialRef: state.policy.credentialRef,
     status: "queued",
     createdAt: new Date(options.now ?? Date.now()).toISOString(),
@@ -278,6 +350,7 @@ export function createGenerationJob(state, selectedPrompt, options = {}) {
       ...state,
       generationJobs: [...state.generationJobs, job],
       generationWindow: { ...window, count: window.count + 1 },
+      generationDayWindow: { ...dayWindow, count: dayWindow.count + 1 },
       counters: {
         ...state.counters,
         generationJobsCreated: state.counters.generationJobsCreated + 1,
@@ -285,6 +358,90 @@ export function createGenerationJob(state, selectedPrompt, options = {}) {
     },
     job,
     deduped: false,
+  };
+}
+
+export function markGenerationRunning(state, jobId, now = Date.now()) {
+  const job = state.generationJobs.find((candidate) => candidate.id === jobId);
+  if (!job) throw new Error("generation_job_not_found");
+  if (job.channelId !== state.channelId) throw new Error("channel_scope_violation");
+  const updatedAt = new Date(now).toISOString();
+  return {
+    ...state,
+    generationJobs: state.generationJobs.map((candidate) =>
+      candidate.id === jobId ? { ...candidate, status: "running", updatedAt } : candidate,
+    ),
+  };
+}
+
+export function failGeneration(state, jobId, errorCode, now = Date.now()) {
+  const job = state.generationJobs.find((candidate) => candidate.id === jobId);
+  if (!job) throw new Error("generation_job_not_found");
+  const updatedAt = new Date(now).toISOString();
+  return {
+    ...state,
+    generationJobs: state.generationJobs.map((candidate) =>
+      candidate.id === jobId
+        ? { ...candidate, status: "failed", errorCode: String(errorCode ?? "provider_generation_failed"), updatedAt }
+        : candidate,
+    ),
+    providerHealth: {
+      status: "degraded",
+      consecutiveFailures: (state.providerHealth?.consecutiveFailures ?? 0) + 1,
+      lastError: String(errorCode ?? "provider_generation_failed"),
+      checkedAt: updatedAt,
+    },
+  };
+}
+
+export function completeMusicGeneration(state, jobId, options = {}) {
+  const job = state.generationJobs.find((candidate) => candidate.id === jobId);
+  if (!job) throw new Error("generation_job_not_found");
+  if (job.channelId !== state.channelId) throw new Error("channel_scope_violation");
+  if (!Number.isFinite(options.durationSeconds) || options.durationSeconds <= 0) {
+    throw new Error("invalid_generated_audio");
+  }
+  const prefix = `channels/${state.channelId}/`;
+  if (!options.assetKey?.startsWith(prefix) || options.assetKey.includes("..")) {
+    throw new Error("channel_scope_violation");
+  }
+  const createdAt = new Date(options.now ?? Date.now()).toISOString();
+  const track = {
+    id: options.trackId ?? `track:${jobId}`,
+    channelId: state.channelId,
+    generationJobId: jobId,
+    provider: job.provider,
+    model: job.model,
+    durationSeconds: options.durationSeconds,
+    assetKey: options.assetKey,
+    contentType: options.contentType ?? "audio/wav",
+    createdAt,
+  };
+  const readyState = queueReadyTrack(state, track);
+  return {
+    state: {
+      ...readyState,
+      generationJobs: readyState.generationJobs.map((candidate) =>
+        candidate.id === jobId
+          ? {
+              ...candidate,
+              status: "ready",
+              updatedAt: createdAt,
+              trackId: track.id,
+              assetKey: track.assetKey,
+              durationSeconds: track.durationSeconds,
+              receiptId: options.receiptId ?? null,
+            }
+          : candidate,
+      ),
+      providerHealth: {
+        status: "healthy",
+        consecutiveFailures: 0,
+        lastError: null,
+        checkedAt: createdAt,
+      },
+    },
+    track,
   };
 }
 
@@ -457,8 +614,10 @@ export function compileStationBrief(state, selectedPrompt) {
     continuity: clone(state.bible),
     providerPolicy: {
       provider: state.policy.provider,
+      model: state.policy.model,
       credentialRef: state.policy.credentialRef,
       generationCapPerHour: state.policy.generationCapPerHour,
+      generationCapPerDay: state.policy.generationCapPerDay,
     },
     instruction:
       "Create one short radio segment that satisfies the listener idea while remaining recognizably part of the current channel universe. Do not imitate a living artist by name.",
