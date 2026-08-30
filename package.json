@@ -1,0 +1,19 @@
+{
+  "name": "infinite-radio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Crowd-steered infinite AI radio with buffered generation and persistent station memory.",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/station-state.js && node --test",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.35.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

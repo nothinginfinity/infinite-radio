@@ -1,0 +1,9 @@
+name = "infinite-radio"
+main = "src/index.js"
+compatibility_date = "2026-08-30"
+
+[observability]
+enabled = true
+
+# V0.1 intentionally has no paid provider secrets or storage bindings.
+# Durable Objects, D1, and R2 are introduced only when their roadmap slices land.
