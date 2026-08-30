@@ -332,6 +332,48 @@ test("real generated audio reaches ready only inside the authorized channel name
   assert.equal(completed.state.providerHealth.status, "healthy");
 });
 
+test("provider outage falls back to a previously generated channel archive track", () => {
+  let state = createChannelState({
+    channelId: "alpha",
+    creatorId: "creator-a",
+    policy: {
+      provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
+      credentialRef: "fal-cassetteai:sha256:abc",
+    },
+  });
+  const firstSubmitted = submitPrompt(state, { id: "archive-1", text: "first successful track" });
+  const firstSelected = selectNextPrompt(firstSubmitted.state);
+  const firstJob = createGenerationJob(firstSelected.state, firstSelected.selected, {
+    credentialRef: state.policy.credentialRef,
+    now: "2026-08-30T20:00:00.000Z",
+  });
+  const firstCompleted = completeMusicGeneration(firstJob.state, firstJob.job.id, {
+    assetKey: `channels/alpha/generated/${firstJob.job.id}.wav`,
+    durationSeconds: 30,
+    now: "2026-08-30T20:00:01.000Z",
+  });
+  assert.equal(firstCompleted.state.archive.length, 1);
+
+  state = { ...firstCompleted.state, readyQueue: [], currentTrack: null };
+  const secondSubmitted = submitPrompt(state, { id: "archive-2", text: "provider will fail now" });
+  const secondSelected = selectNextPrompt(secondSubmitted.state);
+  const secondJob = createGenerationJob(secondSelected.state, secondSelected.selected, {
+    credentialRef: state.policy.credentialRef,
+    now: "2026-08-30T20:01:00.000Z",
+  });
+  const failed = failGeneration(
+    secondJob.state,
+    secondJob.job.id,
+    "provider_offline",
+    "2026-08-30T20:01:01.000Z",
+  );
+  const fallback = chooseNextPlayable(failed);
+  assert.equal(fallback.source, "archive");
+  assert.equal(fallback.track.id, firstCompleted.track.id);
+  assert.equal(fallback.track.channelId, "alpha");
+  assert.equal(fallback.state.status, "fallback");
+});
+
 test("provider failure marks health degraded without leaking credentials", () => {
   let state = createChannelState({
     channelId: "alpha",
