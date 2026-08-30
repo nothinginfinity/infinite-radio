@@ -2,25 +2,27 @@
 
 ## Current milestone
 
-V0.2 — Channel-first Cloudflare runtime — ACCEPTED / LIVE.
+V0.3 — BYOK music provider layer — ACTIVE / LIVE BOUNDARY ACCEPTED; REAL PROVIDER GENERATION PENDING CREATOR BYOK KEY.
 
-V0.2 has moved the accepted V0.1 control model to a creator-owned channel runtime:
-- one logical `ChannelConductor` Durable Object per `channel_id`
-- Durable Object persisted channel authority and restart-safe state
-- channel-scoped D1 schema and R2 `channels/{channel_id}/...` assets
-- creator ownership and credential-reference isolation
-- durable prompt idempotency plus generation/asset replay receipts
-- WebSocket state fanout
-- zero-cost real RIFF/WAV fixture audio
-- optional Workers AI control brief with deterministic fallback
-- concurrent two-channel and 30-minute no-stall simulation coverage
+V0.2 remains accepted and live. V0.3 now adds the first real creator-funded music-generation path without weakening the channel-first runtime:
+- provider-neutral channel policy with `fixture` and first external adapter `fal-cassetteai`
+- request-scoped BYOK handling; only a SHA-256 credential reference persists
+- wrong-key rejection before provider invocation and normalized safe provider error codes before persistence
+- invocation-log and trace hardening so request credentials are not intentionally captured by Worker observability
+- D1 V0.3 schema for provider/model/error data, daily caps, track content metadata, and normalized provider receipts
+- generated WAV validation before READY and R2 storage under `channels/{channel_id}/generated/...`
+- successful real-generation tracks retained in the channel archive for provider-outage fallback
+- hourly + rolling-24-hour generation ceilings and exponential provider retry backoff
+- normalized duration, latency, cost, request-ID, pricing, and provider-terms provenance
+- source tests for raw-secret rejection, cross-channel asset rejection, BYOK mismatch, request-scoped adapter use, safe error normalization, daily/hourly caps, provider health/backoff, and archive fallback
 
-Accepted deployment checkpoint: `54edb80c81f5aa563de1409d23c664f33a8a0e4e`.
-CI: `33339178937` — success.
-Deploy + live acceptance: `33339178936` — success.
+Source checkpoint: `88a94f20b6d88a8e3a42feacc7a46473709f63bc`.
+CI: `33342391862` — success.
+Deploy + V0.3 live-boundary acceptance: `33342391857` — success.
 Live Worker: `https://infinite-radio.jaredtechfit.workers.dev`.
-Cloudflare Worker version: `6e060a21-d448-4df2-80c5-c7d4f8d84924`.
-Cloudflare resources: D1 `infinite-radio-db` (`1293ae6e-8caf-4e95-90d8-136945370d33`) and R2 `infinite-radio-assets`; D1 schema verified remotely.
+Cloudflare resources remain D1 `infinite-radio-db` (`1293ae6e-8caf-4e95-90d8-136945370d33`) and R2 `infinite-radio-assets`.
+
+The remaining V0.3 acceptance step is intentionally not fabricated: a creator must supply a real fal BYOK key for one external generation call so playable provider audio, actual provider request ID, observed latency, and cost attribution are verified end-to-end. Until then V0.3 remains `ACTIVE`, not `ACCEPTED`.
 
 ## Architecture boundary
 
@@ -34,9 +36,9 @@ x402 is planned later as an optional channel-owned commerce/distribution rail fo
 
 ## Next
 
-V0.3 — BYOK music provider layer.
+Finish V0.3 real-provider acceptance with one creator-supplied fal BYOK key. Do not persist or stone the raw key; use it only for the live request, verify the returned WAV/R2 asset and normalized receipt, then close V0.3 canonically.
 
-Preserve V0.2's accepted channel isolation, Durable Object authority, channel-scoped D1/R2 provenance, idempotency, and zero platform-funded music generation while adding the first real creator-supplied music provider adapter.
+After V0.3 is accepted, proceed to V0.4 — listener player / seamless station.
 
 See:
 - `docs/ROADMAP.md`
