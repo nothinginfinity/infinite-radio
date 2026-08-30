@@ -28,6 +28,7 @@ export function createChannelState(overrides = {}) {
     currentTrack: overrides.currentTrack ?? null,
     readyQueue: clone(overrides.readyQueue ?? []),
     promptQueue: clone(overrides.promptQueue ?? []),
+    promptLedger: clone(overrides.promptLedger ?? overrides.promptQueue ?? []),
     generationJobs: clone(overrides.generationJobs ?? []),
     archive: clone(overrides.archive ?? []),
     policy: {
@@ -108,7 +109,7 @@ export function submitPrompt(state, prompt) {
   ).trim();
   if (!idempotencyKey) throw new Error("idempotency_key_required");
 
-  const existing = state.promptQueue.find(
+  const existing = state.promptLedger.find(
     (candidate) => candidate.idempotencyKey === idempotencyKey,
   );
   if (existing) {
@@ -145,6 +146,7 @@ export function submitPrompt(state, prompt) {
     state: {
       ...state,
       promptQueue: [...state.promptQueue, candidate],
+      promptLedger: [...state.promptLedger, candidate],
       counters: {
         ...state.counters,
         promptsAccepted: state.counters.promptsAccepted + 1,
@@ -291,11 +293,26 @@ export function completeFixtureGeneration(state, jobId, options = {}) {
   if (!job) throw new Error("generation_job_not_found");
   if (job.channelId !== state.channelId) throw new Error("channel_scope_violation");
 
-  const existingTrack = state.readyQueue.find(
-    (track) => track.generationJobId === jobId,
+  const existingTrack = [state.currentTrack, ...state.readyQueue, ...state.archive].find(
+    (track) => track?.generationJobId === jobId,
   );
   if (existingTrack) {
     return { state, track: existingTrack, deduped: true };
+  }
+  if (job.status === "ready" && job.trackId && job.assetKey) {
+    return {
+      state,
+      track: {
+        id: job.trackId,
+        channelId: state.channelId,
+        generationJobId: job.id,
+        provider: job.provider,
+        durationSeconds: job.durationSeconds,
+        assetKey: job.assetKey,
+        createdAt: job.updatedAt,
+      },
+      deduped: true,
+    };
   }
 
   const durationSeconds = options.durationSeconds ?? DEFAULT_FIXTURE_TRACK_SECONDS;
@@ -320,6 +337,8 @@ export function completeFixtureGeneration(state, jobId, options = {}) {
               status: "ready",
               updatedAt: track.createdAt,
               trackId: track.id,
+              assetKey: track.assetKey,
+              durationSeconds: track.durationSeconds,
             }
           : candidate,
       ),
