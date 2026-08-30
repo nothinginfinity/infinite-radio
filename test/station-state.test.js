@@ -2,20 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  MUSIC_PROVIDERS,
   assertChannelOwner,
   channelAssetKey,
   chooseNextPlayable,
   compileStationBrief,
   completeFixtureGeneration,
+  completeMusicGeneration,
   createChannelState,
   createGenerationJob,
   createStationState,
   ensureFixtureBuffer,
+  failGeneration,
   needsGeneration,
   queueReadyTrack,
   readyBufferSeconds,
   selectNextPrompt,
   submitPrompt,
+  updateChannelPolicy,
 } from "../src/station-state.js";
 
 test("higher-voted prompt wins without coupling selection to generation", () => {
@@ -214,6 +218,138 @@ test("channel brief carries continuity and provider policy without raw secrets",
   assert.equal(brief.providerPolicy.credentialRef, "cred:alpha");
   assert.match(brief.instruction, /short radio segment/i);
   assert.equal(JSON.stringify(brief).includes("api_key"), false);
+});
+
+test("provider policy accepts only opaque refs and clears them on fixture fallback", () => {
+  let state = createChannelState({ channelId: "alpha", creatorId: "creator-a" });
+  assert.throws(
+    () => updateChannelPolicy(state, { provider: MUSIC_PROVIDERS.FAL_CASSETTEAI, apiKey: "raw-secret" }),
+    /raw_provider_secret_forbidden/,
+  );
+  assert.throws(
+    () => updateChannelPolicy(state, { provider: MUSIC_PROVIDERS.FAL_CASSETTEAI }),
+    /credential_ref_required/,
+  );
+
+  state = updateChannelPolicy(state, {
+    provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
+    credentialRef: "fal-cassetteai:sha256:abc",
+    generationCapPerHour: 5,
+    generationCapPerDay: 10,
+  });
+  assert.equal(state.policy.provider, MUSIC_PROVIDERS.FAL_CASSETTEAI);
+  assert.equal(state.policy.model, "cassetteai/music-generator");
+  assert.equal(state.policy.credentialRef, "fal-cassetteai:sha256:abc");
+
+  state = updateChannelPolicy(state, {
+    provider: MUSIC_PROVIDERS.FIXTURE,
+    credentialRef: null,
+  });
+  assert.equal(state.policy.provider, MUSIC_PROVIDERS.FIXTURE);
+  assert.equal(state.policy.model, "fixture");
+  assert.equal(state.policy.credentialRef, null);
+});
+
+test("hourly and daily provider caps are both enforced", () => {
+  let state = createChannelState({
+    channelId: "alpha",
+    creatorId: "creator-a",
+    policy: {
+      provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
+      credentialRef: "fal-cassetteai:sha256:abc",
+      generationCapPerHour: 2,
+      generationCapPerDay: 2,
+    },
+  });
+  for (let index = 0; index < 2; index += 1) {
+    const submitted = submitPrompt(state, { id: `p${index}`, text: `prompt ${index}` });
+    state = submitted.state;
+    const selected = selectNextPrompt(state);
+    state = createGenerationJob(selected.state, selected.selected, {
+      now: "2026-08-30T20:00:00.000Z",
+      credentialRef: state.policy.credentialRef,
+    }).state;
+  }
+  const submitted = submitPrompt(state, { id: "p3", text: "prompt 3" });
+  const selected = selectNextPrompt(submitted.state);
+  assert.throws(
+    () => createGenerationJob(selected.state, selected.selected, {
+      now: "2026-08-30T20:10:00.000Z",
+      credentialRef: state.policy.credentialRef,
+    }),
+    /generation_cap_reached/,
+  );
+
+  const nextHour = {
+    ...state,
+    generationWindow: { startedAt: "2026-08-30T19:00:00.000Z", count: 2 },
+  };
+  const submittedLater = submitPrompt(nextHour, { id: "p4", text: "prompt 4" });
+  const selectedLater = selectNextPrompt(submittedLater.state);
+  assert.throws(
+    () => createGenerationJob(selectedLater.state, selectedLater.selected, {
+      now: "2026-08-30T21:00:00.000Z",
+      credentialRef: state.policy.credentialRef,
+    }),
+    /daily_generation_cap_reached/,
+  );
+});
+
+test("real generated audio reaches ready only inside the authorized channel namespace", () => {
+  let state = createChannelState({
+    channelId: "alpha",
+    creatorId: "creator-a",
+    policy: {
+      provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
+      credentialRef: "fal-cassetteai:sha256:abc",
+    },
+  });
+  const submitted = submitPrompt(state, { id: "music-1", text: "midnight synth choir" });
+  const selected = selectNextPrompt(submitted.state);
+  const scheduled = createGenerationJob(selected.state, selected.selected, {
+    credentialRef: state.policy.credentialRef,
+    now: "2026-08-30T20:00:00.000Z",
+  });
+  assert.throws(
+    () => completeMusicGeneration(scheduled.state, scheduled.job.id, {
+      assetKey: "channels/beta/generated/foreign.wav",
+      durationSeconds: 30,
+    }),
+    /channel_scope_violation/,
+  );
+  const completed = completeMusicGeneration(scheduled.state, scheduled.job.id, {
+    assetKey: `channels/alpha/generated/${scheduled.job.id}.wav`,
+    durationSeconds: 30,
+    contentType: "audio/wav",
+    receiptId: `receipt:${scheduled.job.id}`,
+    now: "2026-08-30T20:00:05.000Z",
+  });
+  assert.equal(completed.track.channelId, "alpha");
+  assert.equal(completed.state.readyQueue.length, 1);
+  assert.equal(completed.state.generationJobs[0].status, "ready");
+  assert.equal(completed.state.generationJobs[0].receiptId, `receipt:${scheduled.job.id}`);
+  assert.equal(completed.state.providerHealth.status, "healthy");
+});
+
+test("provider failure marks health degraded without leaking credentials", () => {
+  let state = createChannelState({
+    channelId: "alpha",
+    creatorId: "creator-a",
+    policy: {
+      provider: MUSIC_PROVIDERS.FAL_CASSETTEAI,
+      credentialRef: "fal-cassetteai:sha256:abc",
+    },
+  });
+  const submitted = submitPrompt(state, { id: "music-2", text: "broken provider" });
+  const selected = selectNextPrompt(submitted.state);
+  const scheduled = createGenerationJob(selected.state, selected.selected, {
+    credentialRef: state.policy.credentialRef,
+  });
+  const failed = failGeneration(scheduled.state, scheduled.job.id, "provider_offline");
+  assert.equal(failed.generationJobs[0].status, "failed");
+  assert.equal(failed.providerHealth.status, "degraded");
+  assert.equal(failed.providerHealth.lastError, "provider_offline");
+  assert.equal(JSON.stringify(failed).includes("raw-secret"), false);
 });
 
 test("late prompt and generation retries remain idempotent after playback consumption", () => {
