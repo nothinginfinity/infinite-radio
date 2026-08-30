@@ -5,6 +5,7 @@ import {
   ChannelConductor,
   credentialRefFor,
   runFalCassetteAI,
+  safeProviderErrorCode,
 } from "../src/index.js";
 
 class MemoryStorage {
@@ -136,6 +137,16 @@ test("Durable Object owner boundary rejects a different creator", async () => {
   const body = await response.json();
   assert.equal(response.status, 400);
   assert.equal(body.error, "channel_owner_required");
+});
+
+test("provider errors are normalized before state or D1 persistence", () => {
+  assert.equal(
+    safeProviderErrorCode(new Error("upstream failed with secret-key-123")),
+    "provider_generation_failed",
+  );
+  assert.equal(safeProviderErrorCode({ status: 401, message: "credential abc" }), "provider_auth_failed");
+  assert.equal(safeProviderErrorCode({ status: 429 }), "provider_rate_limited");
+  assert.equal(safeProviderErrorCode({ status: 503 }), "provider_unavailable");
 });
 
 test("credential refs are deterministic fingerprints, never raw provider keys", async () => {
