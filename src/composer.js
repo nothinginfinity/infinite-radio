@@ -19,8 +19,17 @@ import {
   validateAndNormalizeScore,
   createFixtureScore,
 } from "./score-schema.js";
+import { assertMusicalQuality } from "./quality-gate.js";
 
 export const DEFAULT_COMPOSER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+// Bounded retry ceiling for composeChannelScore: this many total attempts
+// (including the first) are made against the real composer before falling
+// back to the deterministic fixture. This is a hard ceiling, not a
+// guideline -- composeChannelScore never loops beyond it regardless of how
+// many attempts fail, so a flaky or consistently sparse model can never
+// leave a channel hanging or spam the AI binding unboundedly.
+export const MAX_COMPOSER_ATTEMPTS = 2;
 
 function buildSchemaInstructions() {
   return [
@@ -34,6 +43,7 @@ function buildSchemaInstructions() {
     `Allowed effect types: ${EFFECT_TYPES.join(", ")}, each with amount 0-1.`,
     `pitch is a MIDI note number ${SCORE_LIMITS.MIN_MIDI_PITCH}-${SCORE_LIMITS.MAX_MIDI_PITCH}. start and duration are in beats (start >= 0, duration > 0). velocity is 0-1.`,
     `Compose at most ${SCORE_LIMITS.MAX_TRACKS} tracks and ${SCORE_LIMITS.MAX_TOTAL_EVENTS} total events across all tracks combined. Keep total composition duration under ${SCORE_LIMITS.MAX_DURATION_SECONDS} seconds.`,
+    "Events must have audible activity spread across the ENTIRE declared bar range, including the final bars -- a sustained pad/drone counts as coverage, but do not concentrate all events only near the start and leave the rest of the declared bars silent.",
     "Do not include channelId, creatorId, or any other identity field. Identity is supplied by the runtime; any identity value you include is ignored.",
   ].join("\n");
 }
@@ -147,26 +157,50 @@ export async function composeWithWorkersAI(env, trusted, context, options = {}) 
 }
 
 /**
- * Fail-closed orchestration: try the real Workers AI composer, and on ANY
- * failure (binding unavailable, network/model error, unreadable response,
- * invalid JSON, or a schema/bounds violation) fall back to the deterministic
- * fixture composer instead of leaving the channel unplayable or losing
- * listener intent. The fallback reason is reported, never swallowed.
+ * Fail-closed orchestration: try the real Workers AI composer up to a
+ * bounded number of attempts, requiring each candidate to pass both schema
+ * validation (score-schema.js, via composeWithWorkersAI) AND the musical
+ * temporal-coverage quality gate (quality-gate.js). On ANY failure across
+ * every attempt -- binding unavailable, network/model error, unreadable
+ * response, invalid JSON, a schema/bounds violation, or an obviously
+ * placeholder/sparse composition -- falls back to the deterministic fixture
+ * composer instead of leaving the channel unplayable, losing listener
+ * intent, or queuing a mostly-silent score. The number of attempts is a hard
+ * ceiling (MAX_COMPOSER_ATTEMPTS): this can never loop unboundedly. The
+ * fallback reason is always reported, never swallowed.
  */
 export async function composeChannelScore(env, trusted, context, options = {}) {
-  try {
-    const score = await composeWithWorkersAI(env, trusted, context, options);
-    return { score, source: "workers-ai", fellBack: false, fallbackReason: null };
-  } catch (error) {
-    const fixtureScore = createFixtureScore(trusted, {
-      previousCompositionId: context?.previousCompositionId ?? null,
-      motifIds: context?.recurringMotifs?.length ? context.recurringMotifs : undefined,
-    });
-    return {
-      score: fixtureScore,
-      source: "fixture",
-      fellBack: true,
-      fallbackReason: String(error?.message ?? "composer_failed"),
-    };
+  const maxAttempts = Math.max(
+    1,
+    Math.min(options.maxAttempts ?? MAX_COMPOSER_ATTEMPTS, MAX_COMPOSER_ATTEMPTS),
+  );
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const score = await composeWithWorkersAI(env, trusted, context, options);
+      assertMusicalQuality(score);
+      return {
+        score,
+        source: "workers-ai",
+        fellBack: false,
+        fallbackReason: null,
+        attempts: attempt,
+      };
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  const fixtureScore = createFixtureScore(trusted, {
+    previousCompositionId: context?.previousCompositionId ?? null,
+    motifIds: context?.recurringMotifs?.length ? context.recurringMotifs : undefined,
+  });
+  return {
+    score: fixtureScore,
+    source: "fixture",
+    fellBack: true,
+    fallbackReason: String(lastError?.message ?? "composer_failed"),
+    attempts: maxAttempts,
+  };
 }
