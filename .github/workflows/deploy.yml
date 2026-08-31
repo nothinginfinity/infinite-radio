@@ -24,3 +24,141 @@ jobs:
       - run: npm run db:migrate:remote
       - run: npm run deploy
       - run: node scripts/live-acceptance.mjs
+      - name: Install real-browser acceptance runtime
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Real production browser WebAudio acceptance
+        env:
+          WORKER_URL: https://infinite-radio.jaredtechfit.workers.dev
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { chromium } from "playwright";
+
+          const browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({
+            viewport: { width: 393, height: 852 },
+            hasTouch: true,
+            isMobile: true,
+          });
+          await context.addInitScript(() => {
+            const diagnostics = {
+              contexts: [],
+              contextStates: [],
+              oscillatorStarts: 0,
+              bufferStarts: 0,
+              connectCalls: 0,
+            };
+            Object.defineProperty(window, "__infiniteRadioBrowserDiagnostics", {
+              value: diagnostics,
+              configurable: false,
+              writable: false,
+            });
+            for (const name of ["AudioContext", "webkitAudioContext"]) {
+              const Base = window[name];
+              if (!Base || Base.__infiniteRadioWrapped) continue;
+              const Wrapped = new Proxy(Base, {
+                construct(target, args) {
+                  const audioContext = Reflect.construct(target, args, target);
+                  diagnostics.contexts.push(audioContext);
+                  diagnostics.contextStates.push(audioContext.state);
+                  audioContext.addEventListener("statechange", () => diagnostics.contextStates.push(audioContext.state));
+                  return audioContext;
+                },
+              });
+              Object.defineProperty(Wrapped, "__infiniteRadioWrapped", { value: true });
+              try { window[name] = Wrapped; } catch {}
+            }
+            const wrapStart = (constructorName, counter) => {
+              const Constructor = window[constructorName];
+              const original = Constructor?.prototype?.start;
+              if (!original) return;
+              Constructor.prototype.start = function (...args) {
+                diagnostics[counter] += 1;
+                return original.apply(this, args);
+              };
+            };
+            wrapStart("OscillatorNode", "oscillatorStarts");
+            wrapStart("AudioBufferSourceNode", "bufferStarts");
+            const originalConnect = window.AudioNode?.prototype?.connect;
+            if (originalConnect) {
+              window.AudioNode.prototype.connect = function (...args) {
+                diagnostics.connectCalls += 1;
+                return originalConnect.apply(this, args);
+              };
+            }
+          });
+
+          const page = await context.newPage();
+          const pageErrors = [];
+          const apiFailures = [];
+          page.on("pageerror", error => pageErrors.push(error.message));
+          page.on("response", response => {
+            const url = new URL(response.url());
+            if (response.status() >= 400 && url.pathname.startsWith("/api/")) {
+              apiFailures.push({ status: response.status(), path: url.pathname });
+            }
+          });
+
+          const target = `${process.env.WORKER_URL}/?channel=demo-radio&creator=demo-creator`;
+          await page.goto(target, { waitUntil: "networkidle" });
+          await page.waitForSelector("#play:not([disabled])", { timeout: 45000 });
+
+          const snapshot = async () => page.evaluate(() => {
+            const text = id => document.getElementById(id)?.textContent ?? null;
+            const diagnostics = window.__infiniteRadioBrowserDiagnostics;
+            return {
+              status: text("status"),
+              audioChip: text("audio-chip"),
+              scoreTitle: text("score-title"),
+              position: text("position"),
+              duration: text("duration"),
+              playDisabled: document.getElementById("play")?.disabled ?? true,
+              oscillatorStarts: diagnostics.oscillatorStarts,
+              bufferStarts: diagnostics.bufferStarts,
+              connectCalls: diagnostics.connectCalls,
+              contexts: diagnostics.contexts.map(ctx => ({
+                state: ctx.state,
+                currentTime: ctx.currentTime,
+                sampleRate: ctx.sampleRate,
+              })),
+              contextStates: [...diagnostics.contextStates],
+            };
+          });
+
+          const before = await snapshot();
+          assert.equal(before.playDisabled, false, "Play must enable after the production channel loads");
+          assert.notEqual(before.scoreTitle, "No score loaded", "production channel must load a score before Play");
+          assert.notEqual(before.duration, "0:00", "loaded score must have non-zero duration");
+
+          await page.locator("#play").click();
+          await page.waitForFunction(() => document.getElementById("audio-chip")?.textContent?.includes("running"), null, { timeout: 10000 });
+          await page.waitForTimeout(1400);
+          const afterFirst = await snapshot();
+          await page.waitForTimeout(2200);
+          const afterSecond = await snapshot();
+
+          const totalStarts = afterSecond.oscillatorStarts + afterSecond.bufferStarts;
+          assert.equal(pageErrors.length, 0, `page errors: ${pageErrors.join(" | ")}`);
+          assert.deepEqual(apiFailures, [], `API failures: ${JSON.stringify(apiFailures)}`);
+          assert.ok(afterSecond.contexts.some(ctx => ctx.state === "running"), "AudioContext must remain running after Play");
+          assert.ok(totalStarts >= 2, `expected music node starts beyond the one-sample unlock source, got ${totalStarts}`);
+          assert.ok(afterSecond.connectCalls > 0, "WebAudio nodes must connect into the graph");
+          assert.notEqual(afterSecond.position, afterFirst.position, "playhead must continue advancing after live rejoin");
+          assert.ok(!String(afterSecond.status).startsWith("Station paused:"), `playback was torn down: ${afterSecond.status}`);
+
+          const evidence = {
+            ok: true,
+            target,
+            before,
+            afterFirst,
+            afterSecond,
+            pageErrors,
+            apiFailures,
+            totalStarts,
+          };
+          console.log(`BROWSER_PLAYBACK_EVIDENCE ${JSON.stringify(evidence)}`);
+          await browser.close();
+          NODE
