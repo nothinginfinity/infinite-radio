@@ -267,6 +267,39 @@ test("root serves V0.4 Visual + Score projections with future-only steering and 
   assert.doesNotMatch(html, /AudioWorklet/);
 });
 
+test("channel proxy preserves bounded library query parameters for the Durable Object", async () => {
+  let forwardedUrl = null;
+  let forwardedChannelId = null;
+  const env = {
+    CHANNEL_CONDUCTOR: {
+      idFromName(channelId) {
+        return channelId;
+      },
+      get() {
+        return {
+          async fetch(request) {
+            forwardedUrl = request.url;
+            forwardedChannelId = request.headers.get("x-channel-id");
+            return new Response("ok", { status: 200 });
+          },
+        };
+      },
+    },
+  };
+
+  const response = await worker.fetch(
+    new Request("https://infinite-radio.test/api/channels/alpha/score/library?limit=1&before=2026-08-31T13%3A00%3A00.000Z"),
+    env,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(forwardedChannelId, "alpha");
+  const forwarded = new URL(forwardedUrl);
+  assert.equal(forwarded.pathname, "/score/library");
+  assert.equal(forwarded.searchParams.get("limit"), "1");
+  assert.equal(forwarded.searchParams.get("before"), "2026-08-31T13:00:00.000Z");
+});
+
 test("health advertises the structured-composition browser-synth runtime", async () => {
   const response = await worker.fetch(new Request("https://infinite-radio.test/health"), {});
   const payload = await response.json();
