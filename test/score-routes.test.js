@@ -245,7 +245,7 @@ test("root serves V0.4 Visual + Score projections with future-only steering and 
   assert.match(html, /steeringPrompt/);
   assert.match(html, /drawVisualProjection/);
   assert.match(html, /replace:true/);
-  assert.match(html, /current score is never edited/i);
+  assert.match(html, /score playing now is never edited/i);
   assert.doesNotMatch(html, /EditCommand/);
   assert.doesNotMatch(html, /ScoreReducer/);
   assert.doesNotMatch(html, /\beval\s*\(/);
