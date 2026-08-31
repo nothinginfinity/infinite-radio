@@ -33,6 +33,16 @@ function fakeEnvWithResponse(text) {
   return { AI: { run: async () => ({ response: text }) } };
 }
 
+function fakeEnvWithChatCompletionShape(text) {
+  return {
+    AI: {
+      run: async () => ({
+        choices: [{ finish_reason: "stop", index: 0, message: { content: text } }],
+      }),
+    },
+  };
+}
+
 function fakeEnvThatThrows(message = "model_unavailable") {
   return {
     AI: {
@@ -94,6 +104,13 @@ test("composeWithWorkersAI strips markdown code fences before parsing", async ()
   const env = fakeEnvWithResponse(fenced);
   const score = await composeWithWorkersAI(env, trusted(), buildComposerContext({}));
   assert.equal(score.schemaVersion, SCORE_SCHEMA_VERSION);
+});
+
+test("composeWithWorkersAI reads OpenAI-style choices[0].message.content responses", async () => {
+  const env = fakeEnvWithChatCompletionShape(validRawScoreJson());
+  const score = await composeWithWorkersAI(env, trusted(), buildComposerContext({}));
+  assert.equal(score.schemaVersion, SCORE_SCHEMA_VERSION);
+  assert.equal(score.compositionId, "model-comp-1");
 });
 
 test("composeWithWorkersAI never trusts model-supplied channel/creator identity", async () => {
