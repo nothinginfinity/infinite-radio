@@ -260,6 +260,14 @@ test("root serves V0.4 Visual + Score projections with future-only steering and 
   assert.match(html, /\/score\/library/);
   assert.match(html, /library replay/);
   assert.match(html, /id="return-live"/);
+  assert.match(html, /const CROSSFADE_SECONDS=4/);
+  assert.match(html, /adoptContext\(sharedContext\)/);
+  assert.match(html, /rampMasterTo\(value,seconds=0\)/);
+  assert.match(html, /startDualDeckCrossfade\(session\)/);
+  assert.match(html, /crossfadeInFlight/);
+  assert.match(html, /incoming\.adoptContext\(outgoing\.ctx\)/);
+  assert.match(html, /outgoing\.rampMasterTo\(0,CROSSFADE_SECONDS\)/);
+  assert.match(html, /incoming\.rampMasterTo\(\.5,CROSSFADE_SECONDS\)/);
   assert.doesNotMatch(html, /EditCommand/);
   assert.doesNotMatch(html, /ScoreReducer/);
   assert.doesNotMatch(html, /\beval\s*\(/);
