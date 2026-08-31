@@ -94,6 +94,28 @@ jobs:
           })
           PY
 
+      - name: Report normalized acceptance response
+        if: always() && env.TOKEN != ''
+        shell: bash
+        run: |
+          if [ -f acceptance.json ]; then
+            BODY="$(python3 - <<'PY'
+          import json
+          try:
+              data = json.load(open("acceptance.json"))
+              print(json.dumps(data, separators=(",", ":")))
+          except Exception as error:
+              print(json.dumps({"diagnostic_error": str(error)}, separators=(",", ":")))
+          PY
+            )"
+            BODY="${BODY//'%'/'%25'}"
+            BODY="${BODY//$'\r'/'%0D'}"
+            BODY="${BODY//$'\n'/'%0A'}"
+            echo "::notice title=V0.3 Fal acceptance response::$BODY"
+          else
+            echo "::notice title=V0.3 Fal acceptance response::{\"error\":\"acceptance_json_missing\"}"
+          fi
+
       - name: Restore canonical V0.3 source
         id: restore
         if: always()
