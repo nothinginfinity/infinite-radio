@@ -334,7 +334,19 @@ test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity an
   assert.match(response.headers.get("content-type"), /text\/html/);
   const html = await response.text();
 
-  assert.match(html, /data-step="v0\.4-step-2"/);
+  assert.match(html, /data-step="v0\.4-step-3"/);
+  assert.match(html, /id="score-attribution"/);
+  assert.match(html, /id="attr-provenance"/);
+  assert.match(html, /id="attr-prompt"/);
+  assert.match(html, /id="attr-channel"/);
+  assert.match(html, /function renderAttribution\(score\)/);
+  assert.match(html, /function composerLabel\(composer\)/);
+  assert.match(html, /class="queue-preview"/);
+  assert.match(html, /id="queue-card"/);
+  assert.match(html, /id="queue-provenance-chip"/);
+  assert.match(html, /id="queue-fallback-chip"/);
+  assert.match(html, /function renderQueuePreview\(score\)/);
+  assert.match(html, /Deterministic fixture fallback/);
   assert.match(html, /class ScoreRenderer/);
   const clientScriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
   assert.ok(clientScriptMatch, "root must emit one inline browser script");
