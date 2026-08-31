@@ -229,13 +229,13 @@ test("/score/next is channel-scoped: a second channel gets its own independent q
   assert.equal(alphaState.state.compositionQueue[0].channelId, "alpha");
 });
 
-test("root serves V0.4 Visual + Score projections with future-only steering and no editor mutation path", async () => {
+test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity and no editor mutation path", async () => {
   const response = await worker.fetch(new Request("https://infinite-radio.test/"), {});
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /text\/html/);
   const html = await response.text();
 
-  assert.match(html, /data-step="v0\.4-step-1"/);
+  assert.match(html, /data-step="v0\.4-step-2"/);
   assert.match(html, /class ScoreRenderer/);
   assert.match(html, /infinite-radio-score-v1/);
   assert.match(html, /const canonicalState=/);
@@ -268,6 +268,24 @@ test("root serves V0.4 Visual + Score projections with future-only steering and 
   assert.match(html, /incoming\.adoptContext\(outgoing\.ctx\)/);
   assert.match(html, /outgoing\.rampMasterTo\(0,CROSSFADE_SECONDS\)/);
   assert.match(html, /incoming\.rampMasterTo\(\.5,CROSSFADE_SECONDS\)/);
+  assert.match(html, /this\.master\.context!==this\.ctx/);
+  assert.match(html, /crossfadeEpoch/);
+  assert.match(html, /crossfadeAttemptedCompositionId/);
+  assert.match(html, /function settleCrossfade/);
+  assert.match(html, /const livePlayback=!viewState\.replaying/);
+  assert.match(html, /stationState\.autoAdvance=livePlayback/);
+  assert.match(html, /Playing library replay · live continuity unchanged/);
+  assert.match(html, /Crossfade unavailable · end transition fallback remains active/);
+  assert.match(html, /stationState\.queuedCount<1&&!viewState\.replaying/);
+  assert.match(html, /stationState\.autoAdvance&&!viewState\.replaying&&!stationState\.endedHandled/);
+  const crossfadeStart = html.indexOf("async function startDualDeckCrossfade");
+  const selectionIndex = html.indexOf('await api("/score/select","POST")', crossfadeStart);
+  const contextAdoptIndex = html.indexOf("incoming.adoptContext(outgoing.ctx)", crossfadeStart);
+  const incomingPlayIndex = html.indexOf("await incoming.play()", crossfadeStart);
+  assert.ok(crossfadeStart >= 0);
+  assert.ok(selectionIndex > crossfadeStart, "crossfade must atomically select the FIFO score first");
+  assert.ok(contextAdoptIndex > selectionIndex, "incoming deck must adopt the shared context only after selection");
+  assert.ok(incomingPlayIndex > contextAdoptIndex, "incoming audio must not start before server selection");
   assert.doesNotMatch(html, /EditCommand/);
   assert.doesNotMatch(html, /ScoreReducer/);
   assert.doesNotMatch(html, /\beval\s*\(/);
