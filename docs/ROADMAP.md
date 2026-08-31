@@ -132,9 +132,20 @@ channel musical DNA + listener intent
 
 ---
 
-## V0.4 — Infinite Station / seamless listener experience — NEXT / PLANNED
+## V0.4 — Infinite Station / seamless listener experience — ACTIVE
 
 Goal: make structured compositions feel like a continuous living station while establishing the reusable interaction shell that later becomes the Chat DAW.
+
+### Step 1 checkpoint — 2026-08-30 — ACCEPTED
+- **Visual** is now the default listener projection and **Score** remains an alternate read-only projection; both consume the same frozen canonical score object and neither introduces the V0.5 edit-command path
+- the Visual projection derives deterministic presentation metrics from validated score data: energy, density, pitch brightness, delay/reverb space, key/mode, and harmonic tension; its key ring follows circle-of-fifths relationships while color remains presentation-only
+- a mobile steering sheet exposes semantic energy, tempo feel, brightness, density, space, and harmonic-tension intent for the **next** composition only
+- `POST /score/prebuffer` now supports bounded future-score replacement; steering may replace buffered B while current A remains content-identical and authoritative
+- continuity semantics were tightened: merely queueing/prebuffering a future score no longer advances station motifs/energy/`lastCompositionId`; continuity advances only when a score is selected as `currentComposition`
+- implementation checkpoint `83f1b8c0f72526a7afdb214836e2de58992dc7af` passed CI `33360497802` and Cloudflare deploy + strict live acceptance `33360497805`
+- production acceptance proves current score identity survives future steering, the future queue stays bounded to one, the strict genuine-Workers-AI composition proof remains green, and cross-channel isolation still holds
+- mobile visual evidence `vb_14f8fc82` returned HTTP 200 at 393x852 with scroll width equal to viewport width (393) and title `Infinite Radio · Visual Station`
+- V0.4 remains `ACTIVE`; later slices still own transition/crossfade polish, authoritative current-position/reconnect behavior, attribution/queue-preview polish, and longer station soak acceptance
 
 ### UX contract
 - **one score, many projections:** the browser consumes one validated canonical score; Player, Visual, Arrange, Piano, Mix, Flow, and Chat are views over that musical state rather than independent music engines
