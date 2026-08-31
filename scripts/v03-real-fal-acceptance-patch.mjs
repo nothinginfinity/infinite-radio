@@ -20,6 +20,19 @@ async function runV03FalAcceptance(env) {
   const channelId = __CHANNEL_JSON__;
   const creatorId = __CREATOR_JSON__;
 
+  const authProbe = await fetch("https://api.fal.ai/v1/models?limit=1", {
+    headers: {
+      Authorization: "Key " + env.FAL_API_KEY,
+    },
+  });
+  if (!authProbe.ok) {
+    return json({
+      ok: false,
+      step: "fal_auth_probe",
+      fal_status: authProbe.status,
+    }, { status: 502 });
+  }
+
   async function channelCall(tail, { method = "GET", body, providerKey, overrideCreatorId } = {}) {
     const headers = new Headers({ "x-creator-id": overrideCreatorId || creatorId });
     if (providerKey) headers.set("x-provider-key", providerKey);
@@ -85,7 +98,7 @@ async function runV03FalAcceptance(env) {
     body: { durationSeconds: 30 },
   });
   if (!generation.response.ok) {
-    return json({ ok: false, step: "generation", detail: generation.data }, { status: generation.response.status });
+    return json({ ok: false, step: "generation", auth_probe_status: authProbe.status, detail: generation.data }, { status: generation.response.status });
   }
 
   const track = generation.data.track;
@@ -135,6 +148,7 @@ async function runV03FalAcceptance(env) {
     channel_id: channelId,
     creator_id: creatorId,
     credential_ref: provider.data?.policy?.credentialRef ?? null,
+    auth_probe_status: authProbe.status,
     generation_id: generation.data.generation_id,
     track,
     receipt,
