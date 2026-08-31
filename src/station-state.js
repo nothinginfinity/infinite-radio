@@ -1,3 +1,5 @@
+import { SCORE_SCHEMA_VERSION } from "./score-schema.js";
+
 export const DEFAULT_BUFFER_TARGET_SECONDS = 90;
 export const DEFAULT_GENERATION_CAP_PER_HOUR = 120;
 export const DEFAULT_GENERATION_CAP_PER_DAY = 500;
@@ -84,6 +86,9 @@ export function createChannelState(overrides = {}) {
     promptLedger: clone(overrides.promptLedger ?? overrides.promptQueue ?? []),
     generationJobs: clone(overrides.generationJobs ?? []),
     archive: clone(overrides.archive ?? []),
+    compositionQueue: clone(overrides.compositionQueue ?? []),
+    lastCompositionId: overrides.lastCompositionId ?? null,
+    lastTransitionHint: overrides.lastTransitionHint ?? null,
     policy: normalizePolicy(policy, {
       bufferTargetSeconds: overrides.bufferTargetSeconds ?? policy.bufferTargetSeconds,
     }),
@@ -128,6 +133,8 @@ export function createChannelState(overrides = {}) {
       archiveFallbacks: overrides.counters?.archiveFallbacks ?? 0,
       fixtureTracks: overrides.counters?.fixtureTracks ?? 0,
       autopilotPrompts: overrides.counters?.autopilotPrompts ?? 0,
+      compositionsQueued: overrides.counters?.compositionsQueued ?? 0,
+      compositionFallbacks: overrides.counters?.compositionFallbacks ?? 0,
     },
   };
 }
@@ -266,6 +273,65 @@ export function queueReadyTrack(state, track) {
       tracksQueued: state.counters.tracksQueued + 1,
     },
   };
+}
+
+/**
+ * Queue a validated infinite-radio-score-v1 composition (already produced by
+ * validateAndNormalizeScore / composeChannelScore in composer.js / score-schema.js
+ * -- this function does NOT re-run full schema validation) into the channel's
+ * composition queue, and fold its continuity metadata into the channel bible
+ * so the next composer call sees an accurate previous-composition/motif/energy
+ * picture. Enforces the same channel-scope guard used elsewhere in this file.
+ */
+export function queueComposition(state, score) {
+  if (!score?.compositionId || score.schemaVersion !== SCORE_SCHEMA_VERSION) {
+    throw new Error("valid_composition_required");
+  }
+  if (score.channelId && score.channelId !== state.channelId) {
+    throw new Error("channel_scope_violation");
+  }
+
+  const incomingMotifs = Array.isArray(score.continuity?.motifIds) ? score.continuity.motifIds : [];
+  const mergedMotifs = [...new Set([...(state.bible.recurringMotifs ?? []), ...incomingMotifs])].slice(-16);
+  const nextEnergy = Number.isFinite(score.continuity?.energy) ? score.continuity.energy : state.bible.energy;
+  const nextTransitionHint = score.continuity?.transitionHint ?? state.lastTransitionHint ?? null;
+
+  return {
+    ...state,
+    compositionQueue: [...state.compositionQueue, score],
+    lastCompositionId: score.compositionId,
+    lastTransitionHint: nextTransitionHint,
+    bible: {
+      ...state.bible,
+      recurringMotifs: mergedMotifs,
+      energy: nextEnergy,
+    },
+    counters: {
+      ...state.counters,
+      compositionsQueued: state.counters.compositionsQueued + 1,
+      compositionFallbacks: state.counters.compositionFallbacks + (score.provenance?.composer === "fixture" ? 1 : 0),
+    },
+  };
+}
+
+/**
+ * Pop the next queued composition (FIFO -- compositions are queued in the
+ * order they were composed, so continuity/motif progression stays coherent).
+ * Returns { selected: null, state } unchanged when the queue is empty.
+ */
+export function selectNextComposition(state) {
+  if (state.compositionQueue.length === 0) {
+    return { selected: null, state };
+  }
+  const [selected, ...rest] = state.compositionQueue;
+  return {
+    selected,
+    state: { ...state, compositionQueue: rest },
+  };
+}
+
+export function compositionBufferCount(state) {
+  return state.compositionQueue.length;
 }
 
 export function readyBufferSeconds(state) {
