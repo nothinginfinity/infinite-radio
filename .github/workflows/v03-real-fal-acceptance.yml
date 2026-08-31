@@ -71,28 +71,27 @@ jobs:
           assert data["ok"] is True
           assert data["channel_id"] == os.environ["CHANNEL"]
           assert data["creator_id"] == os.environ["CREATOR"]
-          assert data["credential_ref"].startswith("fal-cassetteai:sha256:")
+          assert data["credential_ref"].startswith("fal-stable-audio:sha256:")
           assert data["track"]["channelId"] == os.environ["CHANNEL"]
           assert data["track"]["assetKey"].startswith(f'channels/{os.environ["CHANNEL"]}/generated/')
-          assert data["track"]["contentType"] == "audio/wav"
+          assert data["track"]["contentType"].startswith("audio/")
           receipt = data["receipt"]
           assert receipt["provider_request_id"]
           assert receipt["latency_ms"] >= 0
-          assert receipt["cost_microusd"] == 10000
-          assert receipt["provenance"]["provider"] == "fal-cassetteai"
-          assert receipt["provenance"]["model"] == "CassetteAI/music-generator"
+          assert receipt["cost_microusd"] == 0
+          assert receipt["provenance"]["provider"] == "fal-stable-audio"
+          assert receipt["provenance"]["model"] == "fal-ai/stable-audio"
           proof = data["proof"]
           assert proof["state_ready"] is True
-          assert proof["r2"]["riff"] is True
-          assert proof["r2"]["wave"] is True
-          assert proof["r2"]["wav_bytes"] > 44
+          assert proof["r2"]["audio_bytes"] > 44
+          assert proof["r2"]["content_type"].startswith("audio/")
           assert proof["r2"]["asset_key"] == data["track"]["assetKey"]
           assert proof["d1_receipt"]["receipt_id"] == receipt["receipt_id"]
           assert proof["d1_receipt"]["channel_id"] == os.environ["CHANNEL"]
           assert proof["d1_receipt"]["generation_id"] == data["generation_id"]
           assert proof["d1_receipt"]["provider_request_id"] == receipt["provider_request_id"]
-          assert int(proof["d1_receipt"]["duration_seconds"]) == 30
-          assert int(proof["d1_receipt"]["cost_microusd"]) == 10000
+          assert int(proof["d1_receipt"]["duration_seconds"]) == 10
+          assert int(proof["d1_receipt"]["cost_microusd"]) == 0
           assert proof["isolation"]["foreign_creator_rejected"] is True
           print({
               "generation_id": data["generation_id"],
@@ -100,7 +99,8 @@ jobs:
               "provider_request_id": receipt["provider_request_id"],
               "latency_ms": receipt["latency_ms"],
               "cost_microusd": receipt["cost_microusd"],
-              "wav_bytes": proof["r2"]["wav_bytes"],
+              "audio_bytes": proof["r2"]["audio_bytes"],
+              "content_type": proof["r2"]["content_type"],
           })
           PY
 
