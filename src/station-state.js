@@ -4,6 +4,7 @@ export const DEFAULT_BUFFER_TARGET_SECONDS = 90;
 export const DEFAULT_GENERATION_CAP_PER_HOUR = 120;
 export const DEFAULT_GENERATION_CAP_PER_DAY = 500;
 export const DEFAULT_FIXTURE_TRACK_SECONDS = 30;
+export const CURRENT_CHANNEL_STATE_VERSION = 3;
 
 export const MUSIC_PROVIDERS = Object.freeze({
   FIXTURE: "fixture",
@@ -75,7 +76,7 @@ export function createChannelState(overrides = {}) {
   const policy = normalizePolicy({}, overrides.policy ?? {});
 
   return {
-    schemaVersion: 2,
+    schemaVersion: CURRENT_CHANNEL_STATE_VERSION,
     channelId,
     creatorId,
     mode: overrides.mode ?? "dj",
@@ -147,6 +148,46 @@ export function createStationState(overrides = {}) {
     creatorId: overrides.creatorId ?? "local-dev",
     ...overrides,
   });
+}
+
+/**
+ * Upgrade a Durable Object channel snapshot created by an older runtime to
+ * the current in-memory shape without discarding any known channel data.
+ * This is intentionally tolerant of fields that did not exist when the
+ * channel was first created (notably the structured-composition queue and
+ * continuity fields added after the original demo channel already existed).
+ */
+export function upgradePersistedChannelState(persisted) {
+  if (!persisted || typeof persisted !== "object" || Array.isArray(persisted)) {
+    throw new Error("invalid_channel_state");
+  }
+  const channelId = requiredId(persisted.channelId, "channel_id_required");
+  const creatorId = requiredId(persisted.creatorId, "creator_id_required");
+  const defaults = createChannelState({ channelId, creatorId });
+  const promptQueue = Array.isArray(persisted.promptQueue) ? persisted.promptQueue : defaults.promptQueue;
+
+  return {
+    ...defaults,
+    ...persisted,
+    schemaVersion: CURRENT_CHANNEL_STATE_VERSION,
+    currentTrack: clone(persisted.currentTrack ?? defaults.currentTrack),
+    readyQueue: clone(Array.isArray(persisted.readyQueue) ? persisted.readyQueue : defaults.readyQueue),
+    promptQueue: clone(promptQueue),
+    promptLedger: clone(Array.isArray(persisted.promptLedger) ? persisted.promptLedger : promptQueue),
+    generationJobs: clone(Array.isArray(persisted.generationJobs) ? persisted.generationJobs : defaults.generationJobs),
+    archive: clone(Array.isArray(persisted.archive) ? persisted.archive : defaults.archive),
+    compositionQueue: clone(Array.isArray(persisted.compositionQueue) ? persisted.compositionQueue : defaults.compositionQueue),
+    currentComposition: clone(persisted.currentComposition ?? defaults.currentComposition),
+    currentCompositionStartedAt: persisted.currentCompositionStartedAt ?? defaults.currentCompositionStartedAt,
+    lastCompositionId: persisted.lastCompositionId ?? defaults.lastCompositionId,
+    lastTransitionHint: persisted.lastTransitionHint ?? defaults.lastTransitionHint,
+    policy: normalizePolicy(defaults.policy, persisted.policy ?? {}),
+    bible: { ...defaults.bible, ...(persisted.bible ?? {}) },
+    generationWindow: { ...defaults.generationWindow, ...(persisted.generationWindow ?? {}) },
+    generationDayWindow: { ...defaults.generationDayWindow, ...(persisted.generationDayWindow ?? {}) },
+    providerHealth: { ...defaults.providerHealth, ...(persisted.providerHealth ?? {}) },
+    counters: { ...defaults.counters, ...(persisted.counters ?? {}) },
+  };
 }
 
 export function updateChannelPolicy(state, update = {}) {
