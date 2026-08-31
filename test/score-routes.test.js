@@ -105,6 +105,34 @@ test("/score/next falls back to the fixture composer when the AI binding is miss
   assert.equal(payload.score.channelId, "alpha");
 });
 
+test("/score/prebuffer serializes concurrent requests and keeps exactly one future score ready", async () => {
+  const env = fakeAiEnv();
+  const originalRun = env.AI.run;
+  let calls = 0;
+  env.AI.run = async (...args) => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return originalRun(...args);
+  };
+  const conductor = new ChannelConductor(makeCtx(new MemoryStorage()), env);
+  await initChannel(conductor);
+
+  const [first, second] = await Promise.all([
+    conductor.fetch(channelRequest("/score/prebuffer", { method: "POST", body: { listenerIntent: { surface: "test" } } })),
+    conductor.fetch(channelRequest("/score/prebuffer", { method: "POST", body: { listenerIntent: { surface: "test" } } })),
+  ]);
+  const firstPayload = await first.json();
+  const secondPayload = await second.json();
+
+  assert.deepEqual([first.status, second.status].sort(), [200, 201]);
+  assert.equal(calls, 1);
+  assert.equal(firstPayload.composition_buffer_count, 1);
+  assert.equal(secondPayload.composition_buffer_count, 1);
+  assert.equal([firstPayload.created, secondPayload.created].filter(Boolean).length, 1);
+  const state = await (await conductor.fetch(channelRequest("/state"))).json();
+  assert.equal(state.state.compositionQueue.length, 1);
+});
+
 test("/score/select pops the queued composition FIFO and empties correctly", async () => {
   const conductor = new ChannelConductor(makeCtx(new MemoryStorage()), fakeAiEnv());
   await initChannel(conductor);
@@ -145,12 +173,16 @@ test("root serves the V0.3.1 read/play workspace shell with an isolated allowlis
   assert.match(response.headers.get("content-type"), /text\/html/);
   const html = await response.text();
 
-  assert.match(html, /data-step="v0\.3\.1-step-5"/);
+  assert.match(html, /data-step="v0\.3\.1-step-6"/);
   assert.match(html, /class ScoreRenderer/);
   assert.match(html, /infinite-radio-score-v1/);
   assert.match(html, /const canonicalState=/);
   assert.match(html, /const viewState=/);
-  assert.match(html, /Generate next/);
+  assert.match(html, /const stationState=/);
+  assert.match(html, /\/score\/prebuffer/);
+  assert.match(html, /ensureNextBuffered/);
+  assert.match(html, /advanceAfterEnd/);
+  assert.match(html, /Buffer next/);
   assert.doesNotMatch(html, /\beval\s*\(/);
   assert.doesNotMatch(html, /new Function\s*\(/);
   assert.doesNotMatch(html, /AudioWorklet/);
