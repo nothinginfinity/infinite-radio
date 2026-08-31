@@ -43,7 +43,9 @@ function buildSchemaInstructions() {
     `Allowed effect types: ${EFFECT_TYPES.join(", ")}, each with amount 0-1.`,
     `pitch is a MIDI note number ${SCORE_LIMITS.MIN_MIDI_PITCH}-${SCORE_LIMITS.MAX_MIDI_PITCH}. start and duration are in beats (start >= 0, duration > 0). velocity is 0-1.`,
     `Compose at most ${SCORE_LIMITS.MAX_TRACKS} tracks and ${SCORE_LIMITS.MAX_TOTAL_EVENTS} total events across all tracks combined. Keep total composition duration under ${SCORE_LIMITS.MAX_DURATION_SECONDS} seconds.`,
-    "Events must have audible activity spread across the ENTIRE declared bar range, including the final bars -- a sustained pad/drone counts as coverage, but do not concentrate all events only near the start and leave the rest of the declared bars silent.",
+    "Prefer a compact declared length of 4 or 8 bars unless the musical idea genuinely needs longer. In 4/4, 4 bars spans beats 0-16 and 8 bars spans beats 0-32.",
+    "Events must create audible activity across the declared timeline, not just at the beginning. Ensure activity reaches the middle AND final bars; one sustained pad/drone spanning those beats is valid coverage.",
+    "Never declare more bars than the events actually occupy. Example: if the latest audible event ends near beat 16 in 4/4, use bars:4 rather than bars:16. If bars:16, activity must extend into the final bars near beats 56-64.",
     "Do not include channelId, creatorId, or any other identity field. Identity is supplied by the runtime; any identity value you include is ignored.",
   ].join("\n");
 }
@@ -78,7 +80,7 @@ export function buildComposerContext(channelState, listenerIntent = {}) {
   };
 }
 
-function buildUserPrompt(context) {
+function buildUserPrompt(context, retryFeedback = null) {
   return JSON.stringify({
     identity: context.identity,
     era: context.era,
@@ -89,7 +91,19 @@ function buildUserPrompt(context) {
     previousCompositionId: context.previousCompositionId,
     transitionHint: context.transitionHint,
     listenerPrompt: context.listenerPrompt,
+    retryFeedback: retryFeedback ? String(retryFeedback).slice(0, 320) : null,
   });
+}
+
+function retryGuidanceFor(error) {
+  const code = String(error?.message ?? "composer_failed");
+  if (code === "insufficient_temporal_coverage") {
+    return "Previous candidate rejected: insufficient_temporal_coverage. Reduce the declared bars to 4 or 8 unless the events truly span longer, and ensure audible activity reaches the middle and final bars. A sustained pad/drone spanning those beats is valid.";
+  }
+  if (code === "no_final_section_activity") {
+    return "Previous candidate rejected: no_final_section_activity. Ensure at least one audible note, sustained pad/drone, or drum event reaches the final bars of the declared timeline.";
+  }
+  return `Previous candidate rejected: ${code}. Return a fresh schema-valid score and follow every duration, section, and temporal-coverage constraint exactly.`;
 }
 
 function extractResponseText(aiResult) {
@@ -136,7 +150,7 @@ export async function composeWithWorkersAI(env, trusted, context, options = {}) 
   const aiResult = await env.AI.run(model, {
     messages: [
       { role: "system", content: buildSchemaInstructions() },
-      { role: "user", content: buildUserPrompt(context) },
+      { role: "user", content: buildUserPrompt(context, options.retryFeedback) },
     ],
     max_tokens: options.maxTokens ?? 2048,
   });
@@ -175,10 +189,14 @@ export async function composeChannelScore(env, trusted, context, options = {}) {
     Math.min(options.maxAttempts ?? MAX_COMPOSER_ATTEMPTS, MAX_COMPOSER_ATTEMPTS),
   );
   let lastError = null;
+  let retryFeedback = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const score = await composeWithWorkersAI(env, trusted, context, options);
+      const score = await composeWithWorkersAI(env, trusted, context, {
+        ...options,
+        retryFeedback,
+      });
       assertMusicalQuality(score);
       return {
         score,
@@ -189,6 +207,7 @@ export async function composeChannelScore(env, trusted, context, options = {}) {
       };
     } catch (error) {
       lastError = error;
+      retryFeedback = retryGuidanceFor(error);
     }
   }
 
