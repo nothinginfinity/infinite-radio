@@ -87,6 +87,7 @@ export function createChannelState(overrides = {}) {
     generationJobs: clone(overrides.generationJobs ?? []),
     archive: clone(overrides.archive ?? []),
     compositionQueue: clone(overrides.compositionQueue ?? []),
+    currentComposition: clone(overrides.currentComposition ?? null),
     lastCompositionId: overrides.lastCompositionId ?? null,
     lastTransitionHint: overrides.lastTransitionHint ?? null,
     policy: normalizePolicy(policy, {
@@ -276,12 +277,10 @@ export function queueReadyTrack(state, track) {
 }
 
 /**
- * Queue a validated infinite-radio-score-v1 composition (already produced by
- * validateAndNormalizeScore / composeChannelScore in composer.js / score-schema.js
- * -- this function does NOT re-run full schema validation) into the channel's
- * composition queue, and fold its continuity metadata into the channel bible
- * so the next composer call sees an accurate previous-composition/motif/energy
- * picture. Enforces the same channel-scope guard used elsewhere in this file.
+ * Queue a validated future composition without advancing authoritative musical
+ * continuity. Continuity advances only when a score is selected/current, so a
+ * listener may safely replace a buffered future score without pretending that
+ * discarded material was ever heard.
  */
 export function queueComposition(state, score) {
   if (!score?.compositionId || score.schemaVersion !== SCORE_SCHEMA_VERSION) {
@@ -291,21 +290,9 @@ export function queueComposition(state, score) {
     throw new Error("channel_scope_violation");
   }
 
-  const incomingMotifs = Array.isArray(score.continuity?.motifIds) ? score.continuity.motifIds : [];
-  const mergedMotifs = [...new Set([...(state.bible.recurringMotifs ?? []), ...incomingMotifs])].slice(-16);
-  const nextEnergy = Number.isFinite(score.continuity?.energy) ? score.continuity.energy : state.bible.energy;
-  const nextTransitionHint = score.continuity?.transitionHint ?? state.lastTransitionHint ?? null;
-
   return {
     ...state,
     compositionQueue: [...state.compositionQueue, score],
-    lastCompositionId: score.compositionId,
-    lastTransitionHint: nextTransitionHint,
-    bible: {
-      ...state.bible,
-      recurringMotifs: mergedMotifs,
-      energy: nextEnergy,
-    },
     counters: {
       ...state.counters,
       compositionsQueued: state.counters.compositionsQueued + 1,
@@ -315,18 +302,33 @@ export function queueComposition(state, score) {
 }
 
 /**
- * Pop the next queued composition (FIFO -- compositions are queued in the
- * order they were composed, so continuity/motif progression stays coherent).
- * Returns { selected: null, state } unchanged when the queue is empty.
+ * Pop the next queued composition and make it the authoritative current score.
+ * This is the continuity boundary: motif/energy/transition memory advances on
+ * selection, never merely because a future candidate was prebuffered.
  */
 export function selectNextComposition(state) {
   if (state.compositionQueue.length === 0) {
     return { selected: null, state };
   }
   const [selected, ...rest] = state.compositionQueue;
+  const incomingMotifs = Array.isArray(selected.continuity?.motifIds) ? selected.continuity.motifIds : [];
+  const mergedMotifs = [...new Set([...(state.bible.recurringMotifs ?? []), ...incomingMotifs])].slice(-16);
+  const nextEnergy = Number.isFinite(selected.continuity?.energy) ? selected.continuity.energy : state.bible.energy;
+  const nextTransitionHint = selected.continuity?.transitionHint ?? state.lastTransitionHint ?? null;
   return {
     selected,
-    state: { ...state, compositionQueue: rest },
+    state: {
+      ...state,
+      compositionQueue: rest,
+      currentComposition: selected,
+      lastCompositionId: selected.compositionId,
+      lastTransitionHint: nextTransitionHint,
+      bible: {
+        ...state.bible,
+        recurringMotifs: mergedMotifs,
+        energy: nextEnergy,
+      },
+    },
   };
 }
 
