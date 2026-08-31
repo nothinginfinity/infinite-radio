@@ -973,7 +973,7 @@ async function proxyChannelRequest(request, env, route) {
   const stub = env.CHANNEL_CONDUCTOR.get(id);
   const headers = new Headers(request.headers);
   headers.set("x-channel-id", route.channelId);
-  const forwarded = new Request(`https://channel.internal${route.tail}`, {
+  const forwarded = new Request(`https://channel.internal${route.tail}${new URL(request.url).search}`, {
     method: request.method,
     headers,
     body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
