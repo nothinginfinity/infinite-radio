@@ -1,6 +1,6 @@
 # Infinite Radio Roadmap
 
-Status legend: `PLANNED` · `ACTIVE` · `ACCEPTED`
+Status legend: `PLANNED` · `ACTIVE` · `FEATURE COMPLETE` · `ACCEPTED`
 
 ## V0.1 — Foundation / deterministic station core — ACCEPTED
 
@@ -132,7 +132,7 @@ channel musical DNA + listener intent
 
 ---
 
-## V0.4 — Infinite Station / seamless listener experience — ACTIVE
+## V0.4 — Infinite Station / seamless listener experience — FEATURE COMPLETE / LONG-SOAK HARDENING DEFERRED
 
 Goal: make structured compositions feel like a continuous living station while establishing the reusable interaction shell that later becomes the Chat DAW.
 
@@ -145,7 +145,14 @@ Goal: make structured compositions feel like a continuous living station while e
 - implementation checkpoint `83f1b8c0f72526a7afdb214836e2de58992dc7af` passed CI `33360497802` and Cloudflare deploy + strict live acceptance `33360497805`
 - production acceptance proves current score identity survives future steering, the future queue stays bounded to one, the strict genuine-Workers-AI composition proof remains green, and cross-channel isolation still holds
 - mobile visual evidence `vb_14f8fc82` returned HTTP 200 at 393x852 with scroll width equal to viewport width (393) and title `Infinite Radio · Visual Station`
-- V0.4 remains `ACTIVE`; later slices still own transition/crossfade polish, authoritative current-position/reconnect behavior, attribution/queue-preview polish, and longer station soak acceptance
+- transition/crossfade, authoritative current-position/reconnect, attribution/queue-preview/fallback UX, and the four real layout/CI issues found during soak-driven testing are implemented and live-accepted
+
+### Product priority decision — 2026-08-31
+- V0.4's product-facing station feature set is **feature complete**; it is intentionally not being relabeled `ACCEPTED` because the previously planned uninterrupted 30-minute browser soak was not completed
+- the 30-minute soak and similar long-duration reliability runs are moved to a later stabilization/hardening phase and **do not gate V0.5 creative-workstation work**
+- the single previously observed ~60-second stall correlated with one HTTP 400 from `/score/select` remains a tracked hardening thread; it was seen once, has not reproduced since, and should be root-caused if it reappears rather than patched speculatively
+- product priority now shifts to the highest-value creative loop: **play → edit → hear → compare/undo**, plus materially broader musical quality and versatility
+- V0.5 is therefore unblocked and active by explicit product-priority decision
 
 ### UX contract
 - **one score, many projections:** the browser consumes one validated canonical score; Player, Visual, Arrange, Piano, Mix, Flow, and Chat are views over that musical state rather than independent music engines
@@ -167,19 +174,40 @@ Goal: make structured compositions feel like a continuous living station while e
 - archive/fixture fallback UX and visible source/fallback state where useful
 - longer-running station soak behavior
 
-### Acceptance
-- 30-minute browser soak without an application-caused audible gap
-- listener reload can rejoin authoritative channel state
-- next composition is prepared before the current composition ends
-- Workers AI/provider failure does not silence a public station
-- renderer can consume a validated score independently of whichever visual projection is active
-- switching views/presentation state cannot alter the canonical score
+### Deferred hardening acceptance
+- long-duration browser soak without an application-caused audible gap — deferred to later stabilization; not a V0.5 gate
+- listener reload can rejoin authoritative channel state — implemented/live-accepted
+- next composition is prepared before the current composition ends — implemented/live-accepted
+- Workers AI/provider failure does not silence a public station — implemented/live-accepted
+- renderer can consume a validated score independently of whichever visual projection is active — implemented/live-accepted
+- switching views/presentation state cannot alter the canonical score — implemented/live-accepted
 
 ---
 
-## V0.5 — Chat DAW / Web Music Workstation — PLANNED
+## V0.5 — Chat DAW / Web Music Workstation — ACTIVE
 
 Goal: turn the structured-score player into an editable browser-native workstation whose interface scales from non-musician semantic controls to precise producer editing without changing the underlying musical object.
+
+### Priority order — 2026-08-31
+1. **Immediate creative feedback loop:** a creator can take the score they are hearing, make a local edit, hear it immediately, A/B against the original, and undo/redo without another model call or server mutation.
+2. **Editing experience before breadth:** ship a small number of delightful, musically legible controls first — tempo, track gain/pan/patch, octave/register changes, section energy, and semantic timbre/energy/space macros — then deepen Arrange/Piano/Mix precision.
+3. **Music quality + versatility pulled forward:** broaden the safe musical vocabulary in parallel with editing: richer allowlisted instruments/patches, drum voices, articulation/envelopes, groove/dynamics, harmonic and arrangement variety, and better composition-quality checks. This work no longer waits for V0.10.
+4. **One score, many skill levels:** every edit must remain visible/audible across Visual, Arrange, Piano, and Mix so beginners and producers manipulate the same draft at different abstraction levels.
+5. **No persistence pressure yet:** early edits stay local and reversible. Immutable Save Version/provenance remains a deliberate later boundary rather than persisting every slider movement.
+
+### Step 1 — local draft + instant A/B editing loop — NEXT
+- local draft cloned from the current validated score, never silently replacing canonical server state
+- deterministic `EditCommand`/reducer boundary with bounded undo/redo
+- Original/Draft A-B preview using the existing Web Audio renderer
+- first controls: tempo, per-track gain/pan/patch, transpose/register, and semantic brightness/energy/space macros
+- every candidate draft is checked before audible preview; leaving the editor can rejoin authoritative live station state
+- mobile editing opens as a focused sheet/fullscreen surface rather than shrinking the active canvas into an unusable desktop DAW
+
+### Step 2 — musical vocabulary + sound-quality expansion
+- extend the allowlisted synth/drum/effect vocabulary without permitting arbitrary executable DSP or arbitrary AudioNode graphs
+- add more expressive patch behavior (envelope/articulation/filter/timbre parameters) through bounded versioned fields
+- improve groove, velocity/dynamics, voicing, motif development, section contrast, transitions, and arrangement diversity
+- strengthen composition quality gates beyond mere temporal coverage so technically valid scores are also less repetitive and more musically useful to edit
 
 ### Interaction architecture
 
@@ -332,7 +360,7 @@ Goal: expose creator-defined music resources through HTTP-native payment/access 
 
 ## V0.10 — Program intelligence + multi-provider routing — PLANNED
 
-Goal: improve musical programming and rendering quality without changing the canonical score contract.
+Goal: improve system-level musical programming, provider routing, and adaptive quality without changing the canonical score contract. Foundational score/synth versatility and creator-facing sound-quality work has been pulled forward into active V0.5.
 
 ### Deliverables
 - composer/provider capability registry
