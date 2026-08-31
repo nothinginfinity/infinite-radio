@@ -66,218 +66,282 @@ Goal: turn the accepted single-station control loop into one isolated creator ch
 
 ---
 
-## V0.3 — BYOK music provider layer — ACTIVE
+## V0.3 — Provider-neutral BYOK rendering boundary — ACCEPTED BOUNDARY / SUPERSEDED AS CORE PATH
 
-Goal: let a channel creator opt into real music generation without making Infinite Radio subsidize GPU usage or hard-wire one vendor.
+Goal: preserve creator-scoped external music rendering without making a funded GPU/audio provider a prerequisite for Infinite Radio's core music loop.
+
+### Accepted boundary
+- provider-neutral generation contract and creator-scoped BYOK credential boundary are implemented
+- request-only secrets are fingerprinted but never persisted raw
+- external provider receipts, cost/latency provenance, retry/backoff, health policy, and channel isolation are implemented
+- fal/CassetteAI and Stable Audio adapters remain available as optional rendering paths
+- real external fal inference was blocked by provider/account HTTP 403 despite successful authentication
+
+### Architecture decision
+
+The prior V0.3 acceptance requirement for a real provider-rendered WAV/MP3 is superseded by V0.3.1. External audio renderers are optional premium interpretations of the canonical score; they no longer gate the product's core completion path.
+
+---
+
+## V0.3.1 — Structured Composition Engine + Browser Synth — ACTIVE
+
+Goal: make a versioned structured musical composition the canonical creative asset and prove original model-generated music can be composed, validated, persisted, and performed without requiring a paid external audio renderer.
+
+### Canonical pipeline
+
+```text
+channel musical DNA + listener intent
+  -> Workers AI composer
+  -> infinite-radio-score-v1
+  -> deterministic validator/normalizer
+  -> channel-scoped score persistence
+  -> browser Web Audio renderer
+  -> audible music
+```
+
+### Architectural rules
+- `infinite-radio-score-v1` is canonical; WAV/MP3 is a rendering, not the source asset
+- LLM output is untrusted constrained data and is never evaluated as code or arbitrary DSP
+- trusted runtime channel/creator identity overrides model-supplied identity
+- Channel Conductor owns continuity: key/mode, BPM range, motifs, palette, energy, arrangement history, listener influence, prior-score identity, and transition hints
+- browser Web Audio performs validated scores locally
+- deterministic fixture composition remains first-class for CI and failure fallback
+- existing fal/Stable Audio adapters remain optional BYOK premium renderers
 
 ### Implementation checkpoint — 2026-08-30
-- provider-neutral generation contract is wired through channel policy and a request-scoped adapter boundary; `fal-cassetteai` / CassetteAI Music Generator is the first external adapter while `fixture` remains the zero-cost fallback
-- BYOK keys are request-only: the Worker stores a SHA-256 credential reference, never the raw key; wrong-key calls fail before provider invocation, provider error strings are normalized before persistence, invocation logs are disabled, and automatic traces are disabled for this Worker
-- D1 migration `0002_v03_byok_provider.sql` adds provider model/error fields, daily caps, track content metadata, and normalized receipt fields for duration/cost/terms provenance
-- successful generated audio is WAV-validated before READY, stored under `channels/{channel_id}/generated/...`, and retained in that channel archive for provider-outage playback fallback
-- provider health uses exponential retry backoff (5s doubling to a 5-minute cap), with hourly and rolling-24-hour channel generation ceilings
-- receipts normalize duration, latency, estimated provider cost, provider request ID, model, pricing provenance, and current fal Terms/API Terms URIs
-- exact source checkpoint `88a94f20b6d88a8e3a42feacc7a46473709f63bc` passed CI `33342391862` and deploy + live V0.3 boundary acceptance `33342391857`
-- live acceptance proves V0.3 health, disposable-key fingerprinting without secret echo, wrong-key rejection before generation, credential clearing on fixture rollback, plus all retained V0.2 creator/channel isolation checks
-- **remaining acceptance evidence:** one creator-supplied fal BYOK key must execute a real external generation so playable provider audio, real provider request ID, latency, and cost attribution can be observed end-to-end; V0.3 stays `ACTIVE` until that evidence exists
-
-### Deliverables
-- provider-neutral `MusicGenerator` interface
-- channel-scoped provider/model policy
-- opaque credential-reference contract; raw BYOK secrets never enter D1/R2/CairnStone/logs
-- first external BYOK music adapter selected for lowest practical complexity/cost
-- duration/latency/cost/provenance receipt normalization
-- R2 asset ingestion under the authorized channel namespace
-- retry/backoff and provider-health policy
-- hard per-channel hourly/daily generation ceilings
-- explicit provider-terms/provenance capture
+- `src/score-schema.js` defines the score schema constants, validator/normalizer choke point, hard safety bounds, trusted identity override, and deterministic fixture composer
+- `test/score-schema.test.js` covers valid output and rejection boundaries
+- checkpoint `1e4229e7f5fb29eeee587fd1600078ea87cfbec2` passed CI `33354280978` and Cloudflare deploy `33354280998`
+- remaining active work: Workers AI composer adapter, conductor composition queue/continuity, score persistence/retrieval, browser renderer, prebuffer/scheduling, and live end-to-end acceptance
 
 ### Acceptance
-- a creator-authorized real prompt generates a playable asset for the correct channel
-- asset reaches READY only after validation
-- provider outage exercises that channel's archive fallback
-- cost and latency are measurable per generation and attributable to the correct channel
-- a channel cannot invoke another channel's credential reference
+- a real Workers AI call creates an original score from channel state + listener intent
+- deterministic validation succeeds before persistence or playback
+- score ownership and persistence remain channel-isolated
+- browser can audibly perform the score using only validated data and allowlisted patches
+- invalid/unavailable model output degrades to deterministic composition without losing station operation
+- score B can be prepared before score A ends
+- all existing BYOK credential/isolation tests remain green
+- CI, deploy, production acceptance, CairnStone reconciliation/lint, and AC1 handoff pass
 
 ---
 
-## V0.4 — Listener player / seamless station — PLANNED
+## V0.4 — Infinite Station / seamless listener experience — PLANNED
 
-Goal: make the station feel live.
+Goal: make structured compositions feel like a continuous living station rather than isolated generated clips.
 
 ### Deliverables
-- mobile-first listener page
-- dual-source Web Audio playback
-- preload + 2–4 second crossfade
-- “now playing” prompt/user attribution
-- queue preview
-- live waveform/visualizer
-- reconnect behavior
-- archive fallback UX
+- mobile-first listener/player surface
+- composition prebuffering and gap-resistant scheduling
+- transitions/crossfades between score performances
+- reconnect and current-position behavior
+- now-playing composition/prompt/creator attribution
+- queue preview and listener steering hooks
+- waveform/visualizer or score-aware visualization
+- archive/fixture fallback UX
+- longer-running station soak behavior
 
 ### Acceptance
-- 30-minute browser soak test without an audible gap caused by application logic
-- listener reload rejoins current station state
-- next segment is preloaded before transition
+- 30-minute browser soak without an application-caused audible gap
+- listener reload can rejoin authoritative channel state
+- next composition is prepared before the current composition ends
+- Workers AI/provider failure does not silence a public station
 
 ---
 
-## V0.5 — Creator accounts + multi-channel management — PLANNED
+## V0.5 — Web Music Workstation — PLANNED
 
-Goal: let one creator own and operate one or many distinct channels without weakening tenant isolation.
+Goal: turn the structured-score player into an editable browser-native music workstation.
+
+### Deliverables
+- score inspector and arrangement/timeline view
+- piano-roll or equivalent note editor
+- track mixer controls
+- allowlisted synth/patch selection
+- tempo/key/section controls
+- direct note/chord/drum editing
+- bounded automation/effect editing
+- undo/redo and non-destructive revision preview
+- import/export of the canonical score without raw credentials
+
+### Acceptance
+- creator can modify a persisted score without running another model inference
+- one-note, one-chord, one-track, and tempo edits are audible immediately in local playback
+- workstation cannot create a score that bypasses canonical validation
+
+---
+
+## V0.6 — AI Co-Producer / targeted score patches — PLANNED
+
+Goal: make the LLM a bounded collaborator that can change selected musical regions instead of regenerating whole songs.
+
+### Deliverables
+- versioned `score-patch` contract
+- selection model for bars/sections/tracks/events
+- prompts such as “rewrite bars 17-20, keep drums, change bass, modulate to C minor”
+- preserve/lock constraints for untouched score regions
+- patch validation against the same score safety rules
+- preview / apply / reject flow
+- deterministic patch diff
+- model/provider adapter boundary shared with structured composition
+
+### Acceptance
+- a selected section can be changed while locked sections remain content-identical
+- rejected patch leaves canonical score unchanged
+- accepted patch produces a new valid revision rather than mutating history in place
+
+---
+
+## V0.7 — Immutable Score + Station DNA provenance — PLANNED
+
+Goal: make musical lineage a first-class graph so every meaningful edit, AI transformation, and fork can be traced without relying on mutable metadata.
+
+### Deliverables
+- content identity/hash for canonical scores
+- immutable score revisions
+- `parent_score_id` and `root_score_id`
+- Station DNA identity and immutable revisions
+- score -> Station DNA provenance
+- composer/model/seed provenance
+- bounded human-edit provenance
+- fork lineage and attribution metadata
+- license/remix-policy references separated from creative content
+- lineage graph queries
+
+### Acceptance
+- Score B derived from Score A never overwrites A
+- a fork can resolve its parent, root, creator, Station DNA, and generation/edit provenance
+- identical canonical content has deterministic content identity
+- provenance graph does not imply legal copyright ownership by itself
+
+---
+
+## V0.8 — Creator publishing + multi-channel management — PLANNED
+
+Goal: let creators operate many musical universes and publish compositions or Station DNA under explicit visibility/remix policies.
 
 ### Deliverables
 - creator account/session model
 - create/edit/archive channel lifecycle
+- creator dashboard across channels
 - channel slug/identity/visibility settings
-- creator dashboard with multiple channels
-- channel-specific genre/station bible controls
-- channel-specific provider/budget policy
+- publish/unpublish score revisions
+- publish Station DNA revisions
+- public/private/unlisted visibility
+- remix/fork permission policy
 - owner/member authorization boundaries
-- import/export of channel configuration without raw secrets
+- discovery metadata and creator profiles
+- import/export without raw secrets
 
 ### Acceptance
-- one creator can operate multiple channels independently
-- two different creators cannot read or mutate each other's private channel state
-- deleting/archiving one channel cannot damage another
+- one creator can operate multiple isolated channels
+- another creator cannot read/mutate private scores, DNA, policies, or credentials
+- a published artifact resolves to an immutable canonical revision and provenance root
+- archiving one channel cannot damage another
 
 ---
 
-## V0.6 — Crowd steering — PLANNED
+## V0.9 — x402 music resources — PLANNED
 
-Goal: turn the station into a game.
+Goal: expose creator-defined music resources through HTTP-native payment/access without making the free/public broadcast loop depend on commerce infrastructure.
+
+### Candidate resources
+- canonical score retrieval/download
+- MIDI / MusicXML export
+- authorized score fork
+- authorized Station DNA fork
+- premium renderer request
+- commercial-use or other creator-defined license offer
+- agent-accessible catalog/API resources
 
 ### Deliverables
-- public prompt submission
-- voting
-- anti-spam/rate limits
-- user fairness
-- novelty/repetition penalties
-- modes: DJ, Jukebox, Chaos
-- moderation pipeline
-- prompt status feedback
+- explicit x402 resource contract and price/policy metadata
+- simple creator-defined payment recipient (`payTo`) as the first settlement model
+- payment/access receipts separated from creative provenance
+- entitlement/resource delivery boundaries
+- idempotency/replay protection
+- revocation/expiry where the resource type supports it
+- machine-readable discovery metadata
+- no assumption that base x402 automatically performs arbitrary multi-party royalty splits
 
 ### Acceptance
-- one busy queue does not generate once per message
-- conductor remains within generation/cost caps
-- repeat users/prompts cannot monopolize the station
+- creator can publish a paid test resource from their own canonical artifact
+- successful payment unlocks only the advertised resource
+- payment failure or facilitator outage never stops a free/public channel
+- another creator cannot monetize an artifact outside their authorization boundary
 
 ---
 
-## V0.7 — DJ transitions + channel personality — PLANNED
+## V0.10 — Program intelligence + multi-provider routing — PLANNED
 
-Goal: hide discontinuities by making them entertainment.
-
-### Deliverables
-- DJ copy agent
-- optional TTS drops
-- transition/sting library
-- configurable DJ persona
-- metadata-aware transitions
-- no-DJ mode
-
-### Acceptance
-- unrelated prompts can transition coherently without audio-to-audio continuation
-- TTS failure does not block next music track
-
----
-
-## V0.8 — CairnStone channel memory — PLANNED
-
-Goal: let each creator channel become more coherent over time without an ever-growing context window or cross-channel leakage.
+Goal: improve musical programming and rendering quality without changing the canonical score contract.
 
 ### Deliverables
-- channel-scoped CairnStone memory chain/policy
-- accepted channel-bible path
-- era-summary schema
-- motif/character history
-- creative-decision stones
-- bounded context package for prompt compiler / DJ / continuity agents
-- periodic D1 -> compressed-era promotion policy
-- explicit rule: high-frequency telemetry stays out of CairnStone
-
-### Acceptance
-- a fresh agent/client can reconstruct current creative identity from accepted state
-- 10,000 historical prompts do not need to enter the active model context
-- channel history remains queryable by era/motif/character
-- one channel's context package contains no private memory from another channel
-
----
-
-## V0.9 — Multi-provider quality routing — PLANNED
-
-Goal: route cheap filler and premium feature tracks differently.
-
-### Deliverables
-- provider capability registry
-- fast filler route
-- feature-track route
-- provider failover
-- instrumental/vocal policies
-- quality/latency/cost scoring
-- A/B testing hooks
-
----
-
-## V0.10 — Program intelligence — PLANNED
-
-Goal: let audience response shape programming.
-
-### Deliverables
-- skip/retention/upvote metrics
+- composer/provider capability registry
+- cost/latency/quality scoring
+- inexpensive default composer route and premium feature route
+- model/provider failover
+- audience skip/retention/upvote metrics
 - Program Director agent
 - motif fatigue detection
 - controlled exploration vs exploitation
-- era transition suggestions
-- human operator override
-
----
-
-## V0.11 — Creator distribution + x402 commerce — PLANNED
-
-Goal: let creators selectively distribute or sell access to artifacts and channel resources they funded, without coupling playback uptime to payment infrastructure.
-
-### Deliverables
-- creator-defined public/private/premium distribution policy
-- immutable release manifest tying asset -> channel -> generation provenance -> provider receipt
-- x402 resource contract for explicitly priced resources
-- candidate resources: premium stream access, track/release download, remix/use offer, agent-accessible catalog/API
-- settlement/access receipts separated from creative provenance
-- revocation/expiry policy where the resource type permits it
-- no claim that platform provenance alone creates copyright ownership
+- era transitions and human override
+- optional CairnStone channel-memory summaries for bounded long-term creative context
 
 ### Acceptance
-- creator can publish a clearly defined paid test resource from their own channel
-- successful payment grants only the advertised resource/access
-- payment failure never stops a free/public channel from broadcasting
-- another creator cannot monetize an asset outside their authorization boundary
+- model/provider can change without changing score consumers
+- expensive renderers/composers are opt-in by creator policy
+- one channel's programming state or memory cannot leak into another
 
 ---
 
-## V1.0 — Multi-channel creator network — PLANNED
+## V0.11 — Open machine music economy — PLANNED
 
-Goal: production launch as a network capable of hosting many independent creator channels.
+Goal: make scores, Station DNA, licenses, composers, and renderers usable by humans and autonomous agents as discoverable programmatic resources.
 
 ### Deliverables
-- production observability
-- creator/channel administration and moderation console
-- abuse handling
-- channel-scoped asset retention policy
-- channel/provider cost alarms
-- multi-region/recovery strategy where needed
-- discovery/listener UX for many channels
-- optional synchronized HLS/Icecast/RTMP output per channel
+- agent-friendly resource/catalog discovery
+- MCP/x402 integration where useful
+- machine-readable score/DNA/license metadata
+- autonomous license/fork/payment workflows
+- third-party composer adapters that emit the canonical score contract
+- third-party renderer adapters that consume the canonical score contract
+- optional provenance-aware royalty router for derivative economics
+- recursive royalty policy only when explicitly configured and technically/legal-policy reviewed
+- external consumers such as games, streams, podcasts, virtual worlds, and creative agents
+
+### Acceptance
+- an authorized agent can discover an offered resource, satisfy its payment/access policy, and consume it without a bespoke bilateral integration
+- external composer/renderer plugins cannot bypass canonical validation or ownership boundaries
+- any royalty routing is derived from explicit policy + provenance, not inferred ownership
+
+---
+
+## V1.0 — Infinite Radio protocol + creator network — PLANNED
+
+Goal: production launch as an open creator network built around portable structured music rather than one proprietary AI-audio renderer.
+
+### Deliverables
+- production observability and creator/channel administration
+- abuse/moderation handling
+- public discovery/listener UX across many channels
+- stable documented score, patch, Station DNA, provenance, renderer, and commerce contracts
+- channel-scoped retention/cost controls
+- recovery/scale strategy
+- optional HLS/Icecast/RTMP or rendered distribution outputs
 - documented provider/legal/attribution/provenance policies
 - scale tests proving tenant isolation under many active channels
+- reference browser player + Web DAW
+- documented third-party integration path for composers/renderers/agents
 
 ### Launch invariant
 
 Each channel keeps playing even when:
 - its chat is empty
-- a generation fails
-- its configured provider is down
+- a composition/generation attempt fails
+- its configured external renderer/provider is down
 - the LLM control layer is unavailable
 - CairnStone is temporarily unreachable
 - x402/payment infrastructure is unavailable
 
-Failure or overload in one channel must not stop unrelated channels. The intelligence and commerce layers improve the network; neither is allowed to become the only thing keeping audio alive.
+Failure or overload in one channel must not stop unrelated channels. The score protocol remains useful when any single AI provider, renderer, wallet system, or platform integration disappears.
