@@ -75,6 +75,11 @@ assert.match(player.data.raw, /audioSession\.type=\"playback\"/);
 assert.match(player.data.raw, /unlockFromGesture/);
 assert.match(player.data.raw, /audio_context_/);
 assert.match(player.data.raw, /id=\"audio-chip\"/);
+assert.match(player.data.raw, /id=\"library-open\"/);
+assert.match(player.data.raw, /id=\"library-sheet\"/);
+assert.match(player.data.raw, /\/score\/library/);
+assert.match(player.data.raw, /library replay/);
+assert.match(player.data.raw, /id=\"return-live\"/);
 assert.doesNotMatch(player.data.raw, /EditCommand/);
 assert.doesNotMatch(player.data.raw, /ScoreReducer/);
 assert.doesNotMatch(player.data.raw, /\beval\s*\(/);
@@ -231,6 +236,33 @@ for (let index = 0; index < modelState.data.state.compositionQueue.length; index
 }
 assert.ok(selectedRealComposition, "real Workers AI composition was persisted but could not be selected by the player API");
 assert.equal(selectedRealComposition.provenance.composer, "workers-ai");
+
+const libraryAfterSelect = await call(`/api/channels/${channelA}/score/library`, { creatorId: creatorA });
+assert.equal(libraryAfterSelect.data.ok, true);
+assert.ok(libraryAfterSelect.data.entries.length >= 2, "expected at least the selected and steered-buffered compositions in the library");
+const selectedLibraryEntry = libraryAfterSelect.data.entries.find(
+  (entry) => entry.compositionId === currentCompositionIdBeforeSteering,
+);
+assert.ok(selectedLibraryEntry, "selected composition should be durably recorded in the library");
+assert.equal(selectedLibraryEntry.status, "selected");
+assert.ok(selectedLibraryEntry.selectedAt);
+
+const libraryReplay = await call(
+  `/api/channels/${channelA}/score/library/${encodeURIComponent(currentCompositionIdBeforeSteering)}`,
+  { creatorId: creatorA },
+);
+assert.equal(libraryReplay.data.ok, true);
+assert.equal(libraryReplay.data.score.compositionId, currentCompositionIdBeforeSteering);
+assert.equal(libraryReplay.data.score.schemaVersion, "infinite-radio-score-v1");
+
+const libraryCrossChannel = await call(
+  `/api/channels/${channelB}/score/library/${encodeURIComponent(currentCompositionIdBeforeSteering)}`,
+  { creatorId: creatorB, expected: [400] },
+);
+assert.equal(libraryCrossChannel.data.error, "channel_scope_violation");
+
+const libraryBoundedLimit = await call(`/api/channels/${channelA}/score/library?limit=1`, { creatorId: creatorA });
+assert.equal(libraryBoundedLimit.data.entries.length, 1);
 
 const acceptanceProviderKey = `acceptance-key-${runId}`;
 const providerConfigured = await call(`/api/channels/${channelA}/provider`, {
@@ -399,4 +431,6 @@ console.log(JSON.stringify({
   currentCompositionIdAfterSteering: stateAfterSteering.data.state.currentComposition.compositionId,
   realWorkersAiCompositionId: realCompositionId,
   realWorkersAiAttempts: modelAttempts,
+  libraryEntriesAfterSelect: libraryAfterSelect.data.entries.length,
+  librarySelectedCompositionStatus: selectedLibraryEntry.status,
 }, null, 2));
