@@ -56,7 +56,10 @@ function fakeAiEnv(overrides = {}) {
             bars: 4,
             sections: [{ startBar: 0, lengthBars: 4, label: "loop" }],
             tracks: [
-              { id: "lead", patch: "sine_lead", events: [{ pitch: 64, start: 0, duration: 1, velocity: 0.7 }] },
+              // Sustained note spanning the whole declared 4-bar/16-beat
+              // timeline so this fixture passes the musical
+              // temporal-coverage quality gate, not just schema validation.
+              { id: "lead", patch: "sine_lead", events: [{ pitch: 64, start: 0, duration: 16, velocity: 0.7 }] },
             ],
             continuity: { motifIds: ["riser"], energy: 0.6 },
           }),
@@ -252,6 +255,11 @@ test("root serves V0.4 Visual + Score projections with future-only steering and 
   assert.match(html, /id=\"audio-chip\"/);
   assert.match(html, /Tap Play to restore audio/);
   assert.match(html, /score playing now is never edited/i);
+  assert.match(html, /id="library-open"/);
+  assert.match(html, /id="library-sheet"/);
+  assert.match(html, /\/score\/library/);
+  assert.match(html, /library replay/);
+  assert.match(html, /id="return-live"/);
   assert.doesNotMatch(html, /EditCommand/);
   assert.doesNotMatch(html, /ScoreReducer/);
   assert.doesNotMatch(html, /\beval\s*\(/);
