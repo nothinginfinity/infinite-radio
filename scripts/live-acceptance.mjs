@@ -53,11 +53,15 @@ assert.equal(health.data.bindings.workersAI, true);
 assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai", "fal-stable-audio"]);
 
 const player = await call("/");
-assert.match(player.data.raw, /data-step="v0\.3\.1-step-5"/);
+assert.match(player.data.raw, /data-step="v0\.3\.1-step-6"/);
 assert.match(player.data.raw, /class ScoreRenderer/);
 assert.match(player.data.raw, /infinite-radio-score-v1/);
 assert.match(player.data.raw, /const canonicalState=/);
 assert.match(player.data.raw, /const viewState=/);
+assert.match(player.data.raw, /const stationState=/);
+assert.match(player.data.raw, /\/score\/prebuffer/);
+assert.match(player.data.raw, /ensureNextBuffered/);
+assert.match(player.data.raw, /advanceAfterEnd/);
 assert.doesNotMatch(player.data.raw, /\beval\s*\(/);
 assert.doesNotMatch(player.data.raw, /new Function\s*\(/);
 assert.doesNotMatch(player.data.raw, /AudioWorklet/);
@@ -104,6 +108,29 @@ const selectedScore = await call(`/api/channels/${channelA}/score/select`, {
 assert.equal(selectedScore.data.ok, true);
 assert.equal(selectedScore.data.score.compositionId, composed.data.score.compositionId);
 assert.equal(selectedScore.data.composition_buffer_count, 0);
+
+const prebuffered = await call(`/api/channels/${channelA}/score/prebuffer`, {
+  method: "POST",
+  creatorId: creatorA,
+  expected: [201],
+  body: { listenerIntent: { surface: "live-acceptance-step6-prebuffer" } },
+});
+assert.equal(prebuffered.data.ok, true);
+assert.equal(prebuffered.data.created, true);
+assert.equal(prebuffered.data.composition_buffer_count, 1);
+assert.ok(prebuffered.data.buffered_composition_id);
+assert.ok(["workers-ai", "fixture"].includes(prebuffered.data.source));
+
+const prebufferReplay = await call(`/api/channels/${channelA}/score/prebuffer`, {
+  method: "POST",
+  creatorId: creatorA,
+  expected: [200],
+  body: { listenerIntent: { surface: "live-acceptance-step6-prebuffer" } },
+});
+assert.equal(prebufferReplay.data.ok, true);
+assert.equal(prebufferReplay.data.created, false);
+assert.equal(prebufferReplay.data.composition_buffer_count, 1);
+assert.equal(prebufferReplay.data.buffered_composition_id, prebuffered.data.buffered_composition_id);
 
 const acceptanceProviderKey = `acceptance-key-${runId}`;
 const providerConfigured = await call(`/api/channels/${channelA}/provider`, {
@@ -267,4 +294,5 @@ console.log(JSON.stringify({
   briefSource: brief.data.source,
   scoreSource: composed.data.source,
   scoreCompositionId: composed.data.score.compositionId,
+  prebufferedCompositionId: prebuffered.data.buffered_composition_id,
 }, null, 2));
