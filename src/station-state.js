@@ -6,6 +6,7 @@ export const DEFAULT_FIXTURE_TRACK_SECONDS = 30;
 export const MUSIC_PROVIDERS = Object.freeze({
   FIXTURE: "fixture",
   FAL_CASSETTEAI: "fal-cassetteai",
+  FAL_STABLE_AUDIO: "fal-stable-audio",
 });
 
 function requiredId(value, code) {
@@ -21,9 +22,9 @@ function clone(value) {
 }
 
 function defaultProviderModel(provider) {
-  return provider === MUSIC_PROVIDERS.FAL_CASSETTEAI
-    ? "cassetteai/music-generator"
-    : "fixture";
+  if (provider === MUSIC_PROVIDERS.FAL_CASSETTEAI) return "cassetteai/music-generator";
+  if (provider === MUSIC_PROVIDERS.FAL_STABLE_AUDIO) return "fal-ai/stable-audio";
+  return "fixture";
 }
 
 function assertNoRawCredentialFields(policy) {
