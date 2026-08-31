@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
 
+function githubAnnotationText(value) {
+  return String(value ?? "unknown live-acceptance failure")
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+}
+
+process.on("uncaughtExceptionMonitor", (error) => {
+  console.error(`::error title=Live acceptance failed::${githubAnnotationText(error?.stack ?? error)}`);
+});
+
 const baseUrl = process.env.LIVE_URL ?? "https://infinite-radio.jaredtechfit.workers.dev";
 const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
 const channelA = `accept-a-${runId}`;
