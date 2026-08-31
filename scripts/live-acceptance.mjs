@@ -39,7 +39,7 @@ assert.equal(health.data.bindings.channelConductor, true);
 assert.equal(health.data.bindings.d1, true);
 assert.equal(health.data.bindings.r2, true);
 assert.equal(health.data.bindings.workersAI, true);
-assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai"]);
+assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai", "fal-stable-audio"]);
 
 for (const [channelId, creatorId] of [
   [channelA, creatorA],
