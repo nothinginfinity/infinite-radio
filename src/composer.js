@@ -85,7 +85,14 @@ function extractResponseText(aiResult) {
   if (typeof aiResult === "string") return aiResult;
   if (aiResult && typeof aiResult.response === "string") return aiResult.response;
   if (aiResult?.result && typeof aiResult.result.response === "string") return aiResult.result.response;
-  throw new Error("composer_response_unreadable");
+  const debugShape = (() => {
+    try {
+      return JSON.stringify(aiResult)?.slice(0, 300);
+    } catch {
+      return String(aiResult);
+    }
+  })();
+  throw new Error(`composer_response_unreadable:${debugShape}`);
 }
 
 function stripCodeFences(text) {
