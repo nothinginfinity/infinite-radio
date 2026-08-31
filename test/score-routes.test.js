@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import vm from "node:vm";
 
 import worker, { ChannelConductor } from "../src/index.js";
 import { SCORE_SCHEMA_VERSION } from "../src/score-schema.js";
@@ -335,6 +336,9 @@ test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity an
 
   assert.match(html, /data-step="v0\.4-step-2"/);
   assert.match(html, /class ScoreRenderer/);
+  const clientScriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(clientScriptMatch, "root must emit one inline browser script");
+  assert.doesNotThrow(() => new vm.Script(clientScriptMatch[1]), "emitted browser script must parse");
   assert.match(html, /infinite-radio-score-v1/);
   assert.match(html, /const canonicalState=/);
   assert.match(html, /const viewState=/);
