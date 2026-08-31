@@ -26,6 +26,7 @@ function buildSchemaInstructions() {
   return [
     `Return ONLY a single JSON object matching the "${SCORE_SCHEMA_VERSION}" schema. No markdown, no prose, no code fences -- JSON only, nothing before or after it.`,
     `Required top-level fields: schemaVersion (must equal "${SCORE_SCHEMA_VERSION}"), compositionId (string), bpm (number ${SCORE_LIMITS.MIN_BPM}-${SCORE_LIMITS.MAX_BPM}), timeSignature ({beatsPerBar, beatUnit}), key ({root, mode}), bars (integer 1-${SCORE_LIMITS.MAX_BARS}), sections ([{startBar,lengthBars,label,energy}]), tracks, continuity ({motifIds,energy,transitionHint,previousCompositionId}), seed, provenance ({composer,model,promptSummary}).`,
+    "For sections: every section's startBar + lengthBars must be <= bars (the total bar count). The simplest valid choice is exactly one section: {\"startBar\": 0, \"lengthBars\": <bars>, \"label\": \"main\"}. Do not create sections that extend past the end of the composition.",
     `Each track: {id, patch, events:[{pitch,start,duration,velocity}], effects:[{type,amount}], pan, gain}. A drum track instead sets isDrumTrack:true and drumEvents:[{patch,start,velocity}].`,
     `Allowed key roots: ${PITCH_CLASSES.join(", ")}. Allowed key modes: ${SCALE_MODES.join(", ")}.`,
     `Allowed synth patch ids (non-drum tracks): ${SYNTH_PATCHES.join(", ")}.`,
