@@ -85,14 +85,9 @@ function extractResponseText(aiResult) {
   if (typeof aiResult === "string") return aiResult;
   if (aiResult && typeof aiResult.response === "string") return aiResult.response;
   if (aiResult?.result && typeof aiResult.result.response === "string") return aiResult.result.response;
-  const debugShape = (() => {
-    try {
-      return JSON.stringify(aiResult)?.slice(0, 300);
-    } catch {
-      return String(aiResult);
-    }
-  })();
-  throw new Error(`composer_response_unreadable:${debugShape}`);
+  const choiceContent = aiResult?.choices?.[0]?.message?.content;
+  if (typeof choiceContent === "string") return choiceContent;
+  throw new Error("composer_response_unreadable");
 }
 
 function stripCodeFences(text) {
