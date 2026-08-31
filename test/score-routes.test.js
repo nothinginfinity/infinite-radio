@@ -72,7 +72,7 @@ async function initChannel(conductor) {
   assert.equal(response.status, 201);
 }
 
-test("/score/next composes via Workers AI, queues the score, and updates continuity", async () => {
+test("/score/next queues a future score without advancing continuity until selection", async () => {
   const conductor = new ChannelConductor(makeCtx(new MemoryStorage()), fakeAiEnv());
   await initChannel(conductor);
 
@@ -86,8 +86,16 @@ test("/score/next composes via Workers AI, queues the score, and updates continu
   assert.equal(payload.score.schemaVersion, SCORE_SCHEMA_VERSION);
   assert.equal(payload.score.channelId, "alpha");
   assert.equal(payload.composition_buffer_count, 1);
-  assert.equal(payload.state.lastCompositionId, "ai-comp-1");
-  assert.ok(payload.state.bible.recurringMotifs.includes("riser"));
+  assert.equal(payload.state.currentComposition, null);
+  assert.equal(payload.state.lastCompositionId, null);
+  assert.equal(payload.state.bible.recurringMotifs.includes("riser"), false);
+
+  const selectedResponse = await conductor.fetch(channelRequest("/score/select", { method: "POST" }));
+  const selected = await selectedResponse.json();
+  assert.equal(selected.score.compositionId, "ai-comp-1");
+  assert.equal(selected.state.currentComposition.compositionId, "ai-comp-1");
+  assert.equal(selected.state.lastCompositionId, "ai-comp-1");
+  assert.ok(selected.state.bible.recurringMotifs.includes("riser"));
 });
 
 test("/score/next falls back to the fixture composer when the AI binding is missing", async () => {
@@ -133,6 +141,57 @@ test("/score/prebuffer serializes concurrent requests and keeps exactly one futu
   assert.equal(state.state.compositionQueue.length, 1);
 });
 
+test("/score/prebuffer replace reshapes only the future score and preserves the current continuity anchor", async () => {
+  const env = fakeAiEnv();
+  const originalRun = env.AI.run;
+  let calls = 0;
+  env.AI.run = async (...args) => {
+    calls += 1;
+    const result = await originalRun(...args);
+    const score = JSON.parse(result.response);
+    score.compositionId = `ai-comp-${calls}`;
+    score.continuity = { motifIds: [`motif-${calls}`], energy: 0.4 + calls * 0.1 };
+    return { response: JSON.stringify(score) };
+  };
+  const conductor = new ChannelConductor(makeCtx(new MemoryStorage()), env);
+  await initChannel(conductor);
+
+  const firstBuffer = await conductor.fetch(channelRequest("/score/prebuffer", { method: "POST", body: { listenerIntent: { text: "first" } } }));
+  assert.equal(firstBuffer.status, 201);
+  const firstPayload = await firstBuffer.json();
+  assert.equal(firstPayload.buffered_composition_id, "ai-comp-1");
+
+  const selectedResponse = await conductor.fetch(channelRequest("/score/select", { method: "POST" }));
+  const selected = await selectedResponse.json();
+  assert.equal(selected.score.compositionId, "ai-comp-1");
+  assert.equal(selected.state.currentComposition.compositionId, "ai-comp-1");
+  assert.equal(selected.state.lastCompositionId, "ai-comp-1");
+  assert.ok(selected.state.bible.recurringMotifs.includes("motif-1"));
+
+  const secondBuffer = await conductor.fetch(channelRequest("/score/prebuffer", { method: "POST", body: { listenerIntent: { text: "second" } } }));
+  const secondPayload = await secondBuffer.json();
+  assert.equal(secondPayload.buffered_composition_id, "ai-comp-2");
+  assert.equal(secondPayload.state.currentComposition.compositionId, "ai-comp-1");
+  assert.equal(secondPayload.state.lastCompositionId, "ai-comp-1");
+  assert.equal(secondPayload.state.bible.recurringMotifs.includes("motif-2"), false);
+
+  const replacement = await conductor.fetch(channelRequest("/score/prebuffer", {
+    method: "POST",
+    body: { replace: true, listenerIntent: { surface: "v04_visual_steering", text: "brighter and stranger next" } },
+  }));
+  assert.equal(replacement.status, 201);
+  const replacementPayload = await replacement.json();
+  assert.equal(replacementPayload.created, true);
+  assert.equal(replacementPayload.replaced, true);
+  assert.equal(replacementPayload.previous_buffered_composition_id, "ai-comp-2");
+  assert.equal(replacementPayload.buffered_composition_id, "ai-comp-3");
+  assert.equal(replacementPayload.composition_buffer_count, 1);
+  assert.equal(replacementPayload.state.currentComposition.compositionId, "ai-comp-1");
+  assert.equal(replacementPayload.state.lastCompositionId, "ai-comp-1");
+  assert.equal(replacementPayload.state.bible.recurringMotifs.includes("motif-3"), false);
+  assert.equal(calls, 3);
+});
+
 test("/score/select pops the queued composition FIFO and empties correctly", async () => {
   const conductor = new ChannelConductor(makeCtx(new MemoryStorage()), fakeAiEnv());
   await initChannel(conductor);
@@ -167,22 +226,28 @@ test("/score/next is channel-scoped: a second channel gets its own independent q
   assert.equal(alphaState.state.compositionQueue[0].channelId, "alpha");
 });
 
-test("root serves the V0.3.1 read/play workspace shell with an isolated allowlisted WebAudio renderer", async () => {
+test("root serves V0.4 Visual + Score projections with future-only steering and no editor mutation path", async () => {
   const response = await worker.fetch(new Request("https://infinite-radio.test/"), {});
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /text\/html/);
   const html = await response.text();
 
-  assert.match(html, /data-step="v0\.3\.1-step-6"/);
+  assert.match(html, /data-step="v0\.4-step-1"/);
   assert.match(html, /class ScoreRenderer/);
   assert.match(html, /infinite-radio-score-v1/);
   assert.match(html, /const canonicalState=/);
   assert.match(html, /const viewState=/);
   assert.match(html, /const stationState=/);
-  assert.match(html, /\/score\/prebuffer/);
-  assert.match(html, /ensureNextBuffered/);
-  assert.match(html, /advanceAfterEnd/);
-  assert.match(html, /Buffer next/);
+  assert.match(html, /currentComposition/);
+  assert.match(html, /Visual/);
+  assert.match(html, /Steer next/);
+  assert.match(html, /scoreMetrics/);
+  assert.match(html, /steeringPrompt/);
+  assert.match(html, /drawVisualProjection/);
+  assert.match(html, /replace:true/);
+  assert.match(html, /current score is never edited/i);
+  assert.doesNotMatch(html, /EditCommand/);
+  assert.doesNotMatch(html, /ScoreReducer/);
   assert.doesNotMatch(html, /\beval\s*\(/);
   assert.doesNotMatch(html, /new Function\s*\(/);
   assert.doesNotMatch(html, /AudioWorklet/);
