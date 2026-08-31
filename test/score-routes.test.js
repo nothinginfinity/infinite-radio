@@ -245,6 +245,12 @@ test("root serves V0.4 Visual + Score projections with future-only steering and 
   assert.match(html, /steeringPrompt/);
   assert.match(html, /drawVisualProjection/);
   assert.match(html, /replace:true/);
+  assert.match(html, /navigator\.audioSession/);
+  assert.match(html, /audioSession\.type=\"playback\"/);
+  assert.match(html, /unlockFromGesture/);
+  assert.match(html, /audio_context_/);
+  assert.match(html, /id=\"audio-chip\"/);
+  assert.match(html, /Tap Play to restore audio/);
   assert.match(html, /score playing now is never edited/i);
   assert.doesNotMatch(html, /EditCommand/);
   assert.doesNotMatch(html, /ScoreReducer/);
