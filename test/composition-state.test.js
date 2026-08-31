@@ -6,6 +6,7 @@ import {
   queueComposition,
   selectNextComposition,
   compositionBufferCount,
+  currentCompositionPlayback,
 } from "../src/station-state.js";
 import { createFixtureScore } from "../src/score-schema.js";
 
@@ -88,10 +89,34 @@ test("selectNextComposition pops compositions in FIFO order and empties cleanly"
   assert.equal(compositionBufferCount(empty.state), 0);
 });
 
+test("selection records an authoritative start time and playback derives bounded current position", () => {
+  let state = baseState();
+  const score = createFixtureScore(trustedFor(state), { compositionId: "clocked-comp" });
+  state = queueComposition(state, score);
+  const startedAt = "2026-08-31T14:10:00.000Z";
+  state = selectNextComposition(state, { now: startedAt }).state;
+
+  assert.equal(state.currentCompositionStartedAt, startedAt);
+  const mid = currentCompositionPlayback(state, new Date(startedAt).getTime() + 1500);
+  assert.equal(mid.compositionId, "clocked-comp");
+  assert.equal(mid.startedAt, startedAt);
+  assert.equal(mid.positionSeconds, 1.5);
+  assert.equal(mid.durationSeconds, score.durationSeconds);
+  assert.equal(mid.ended, false);
+
+  const ended = currentCompositionPlayback(
+    state,
+    new Date(startedAt).getTime() + (score.durationSeconds + 1) * 1000,
+  );
+  assert.equal(ended.positionSeconds, score.durationSeconds);
+  assert.equal(ended.ended, true);
+});
+
 test("a freshly created channel state starts with an empty composition queue and null continuity", () => {
   const state = baseState();
   assert.deepEqual(state.compositionQueue, []);
   assert.equal(state.currentComposition, null);
+  assert.equal(state.currentCompositionStartedAt, null);
   assert.equal(state.lastCompositionId, null);
   assert.equal(state.lastTransitionHint, null);
   assert.equal(state.counters.compositionsQueued, 0);
