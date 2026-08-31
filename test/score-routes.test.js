@@ -116,6 +116,38 @@ test("/score/next falls back to the fixture composer when the AI binding is miss
   assert.equal(payload.score.channelId, "alpha");
 });
 
+test("legacy persisted channels are hydrated before structured composition generation", async () => {
+  const storage = new MemoryStorage();
+  const conductor = new ChannelConductor(makeCtx(storage), fakeAiEnv());
+  await initChannel(conductor);
+
+  const legacy = await storage.get("channel-state");
+  legacy.schemaVersion = 2;
+  delete legacy.compositionQueue;
+  delete legacy.currentComposition;
+  delete legacy.currentCompositionStartedAt;
+  delete legacy.lastCompositionId;
+  delete legacy.lastTransitionHint;
+  delete legacy.counters.compositionsQueued;
+  delete legacy.counters.compositionFallbacks;
+  await storage.put("channel-state", legacy);
+
+  const response = await conductor.fetch(channelRequest("/score/prebuffer", { method: "POST", body: {} }));
+  assert.equal(response.status, 201);
+  const payload = await response.json();
+  assert.equal(payload.ok, true);
+  assert.equal(payload.composition_buffer_count, 1);
+  assert.equal(payload.source, "workers-ai");
+
+  const repaired = await storage.get("channel-state");
+  assert.equal(repaired.schemaVersion, 3);
+  assert.equal(repaired.compositionQueue.length, 1);
+  assert.equal(repaired.currentComposition, null);
+  assert.equal(repaired.lastCompositionId, null);
+  assert.equal(repaired.counters.compositionsQueued, 1);
+  assert.equal(repaired.counters.compositionFallbacks, 0);
+});
+
 test("/score/prebuffer serializes concurrent requests and keeps exactly one future score ready", async () => {
   const env = fakeAiEnv();
   const originalRun = env.AI.run;
