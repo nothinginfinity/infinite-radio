@@ -154,15 +154,105 @@ This technical control/provenance layer does not itself guarantee copyright owne
 
 x402 is a later optional commerce/distribution rail, not an early playback dependency. A creator may eventually publish channel-defined paid resources such as premium streams, track downloads, releases, remix/use rights, agent-accessible catalogs, or other explicitly defined offers. Payment settlement and access receipts must remain separate from the underlying creative provenance record.
 
-## 8. Browser playback
+## 8. Browser workspace, playback, and UI projections
 
-The earliest listener client uses two HTMLAudio/Web Audio sources:
-- A = currently audible
-- B = preloaded next segment
+The browser is both the first performance runtime and the long-term creator workspace. The architecture therefore treats the V0.3.1 player as the first shell of the later Chat DAW rather than as a disposable single-purpose page.
 
-Gain envelopes crossfade A -> B. This avoids introducing a server-side mixing stack before product behavior is validated.
+### One score, many projections
 
-A later broadcast output can render server-side HLS/Icecast/RTMP if a universal synchronized stream becomes necessary.
+Every browser view reads the same validated `infinite-radio-score-v1` musical object. Views are projections, not independent sources of musical truth:
+
+```text
+                         validated score
+                               |
+          +--------------------+--------------------+
+          |                    |                    |
+          v                    v                    v
+       Visual               Arrange               Piano
+          |                    |                    |
+          +-------------+------+---------+----------+
+                        |                |
+                        v                v
+                       Mix              Flow
+                        \                /
+                         +------ Chat ---+
+```
+
+The same note moved in Piano must be reflected by any corresponding representation in Arrange/Visual/Mix. Switching views alone never modifies musical state.
+
+### State separation
+
+Browser state is deliberately separated into four concerns:
+
+1. **canonical score/revision** — validated server-backed creative state
+2. **playback runtime** — AudioContext, scheduler, playhead, active voices, prebuffer/crossfade state
+3. **view state** — selected view, zoom, scroll, open inspector, visual palette, current selection
+4. **local draft** (V0.5+) — uncommitted human/AI-assisted edits with undo/redo
+
+The renderer consumes validated score data and does not depend on a particular editor/view implementation. View components must not mutate the authoritative score in place.
+
+### V0.3.1 Step 5 shell
+
+Step 5 remains intentionally minimal: a mobile-first browser player plus native Web Audio renderer for validated scores. However, its component/state boundaries should be reusable by later UI work:
+
+- channel/station header and now-playing identity
+- central active-canvas region
+- persistent transport/playback controls
+- score/provenance/source status where useful, including deterministic-fallback visibility during development
+- responsive mobile-first layout
+- renderer isolated behind a score-to-performance interface
+- no direct score editing, AI patches, provenance revisioning, publishing, or x402 in this slice
+
+The V0.3.1 renderer synthesizes only the allowlisted score contract: approved oscillator/synth patch IDs, drum patches, gain/pan, and bounded effects. It never interprets generated JavaScript or arbitrary DSP graphs.
+
+### V0.4 listener interaction / Visual projection
+
+V0.4 can make the shell expressive for non-musicians before it becomes a full workstation. A `Visual` projection may expose semantic controls such as energy, tempo, brightness/darkness, density, spaciousness, or harmonic tension. These are deterministic macros over allowed score/channel fields, not free-form model calls.
+
+Harmonic visualizations should represent actual relationships such as key proximity/circle-of-fifths movement. Color is a configurable presentation layer; no single synesthetic color-to-note mapping becomes protocol truth.
+
+Mobile should prioritize the active visual/player canvas and transport. Chat/controls can open as sheets or fullscreen modes instead of permanently shrinking the musical surface.
+
+### V0.5 Chat DAW mutation path
+
+The editor must introduce a controlled transformation layer rather than letting components write raw JSON:
+
+```text
+UI gesture
+   -> EditCommand
+   -> deterministic ScoreReducer / transform
+   -> candidate local draft
+   -> validate + normalize
+   -> Web Audio preview
+   -> Save Version
+```
+
+Examples include `MoveNote`, `ResizeNote`, `SetTrackGain`, `SetTempo`, `Transpose`, `SetEffectAmount`, or higher-level semantic macro commands. Pointer movement may update local draft state continuously, but persistent version history is created only at deliberate save/version boundaries.
+
+The initial projections are:
+
+- **Visual** — mood/energy/harmonic/timbre macro controls for non-musicians
+- **Arrange** — sections, track lanes, patterns, structure, and energy arcs
+- **Piano** — precise pitch/timing/duration/velocity/drum editing
+- **Mix** — gain, pan, allowlisted patch selection, bounded effects
+- **Flow** — constrained view of the allowlisted patch/effect chain
+- **Chat** — contextual co-producer surface attached to the current selection/draft
+
+`Flow` is not initially Max/MSP. The current score contract deliberately forbids arbitrary WebAudio graphs. A true modular synthesizer requires a separate future versioned safe patch contract; until then Flow can only express/reorder/configure what the allowlist supports.
+
+### V0.6 AI editing
+
+AI does not get a privileged mutation path. A complete model-produced `score-patch` is parsed and validated first, then converted into the same controlled draft/change system used by human actions. Conversational text may stream, but incomplete JSON/model output must never mutate the live draft token-by-token.
+
+Selection and locks are first-class: the user can select bars/tracks/events, lock untouched material, request a transformation, preview the diff/A-B result, then apply or reject it.
+
+### Revision and publishing UX
+
+V0.7+ makes revision lineage visible in the interface: history, compare, restore, fork, and save-version actions map to immutable score/Station-DNA provenance. V0.8/V0.9 publishing should use plain product language such as **Publish**, **Publish & Price**, **Offer License**, or **Make Forkable**. x402 payment does not imply NFT/token minting, so the default interface should not say `Mint & Sell` unless a future explicit minting feature actually exists.
+
+### Future synchronized broadcast
+
+Client-side score performance remains the default low-cost path. A later broadcast output can render server-side HLS/Icecast/RTMP if a universal synchronized stream becomes necessary.
 
 ## 9. Agent roles (later)
 
