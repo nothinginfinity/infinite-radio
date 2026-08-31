@@ -54,6 +54,30 @@ assert.equal(health.data.bindings.r2, true);
 assert.equal(health.data.bindings.workersAI, true);
 assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai", "fal-stable-audio"]);
 
+// The user-facing demo channel predates the structured-composition runtime.
+// Keep one explicit persistent-channel probe so fresh-channel acceptance can
+// never hide a Durable Object state-shape migration regression again.
+const persistentDemoInit = await call("/api/channels/demo-radio/init", {
+  method: "POST",
+  creatorId: "demo-creator",
+  expected: [201],
+  body: { creatorId: "demo-creator" },
+});
+assert.equal(persistentDemoInit.data.ok, true);
+assert.ok(persistentDemoInit.data.state.schemaVersion >= 3);
+assert.ok(Array.isArray(persistentDemoInit.data.state.compositionQueue));
+assert.ok(Object.hasOwn(persistentDemoInit.data.state, "currentComposition"));
+
+const persistentDemoBuffer = await call("/api/channels/demo-radio/score/prebuffer", {
+  method: "POST",
+  creatorId: "demo-creator",
+  expected: [200, 201],
+  body: { listenerIntent: { surface: "live-acceptance-persistent-demo" } },
+});
+assert.equal(persistentDemoBuffer.data.ok, true);
+assert.ok(persistentDemoBuffer.data.composition_buffer_count >= 1);
+assert.ok(persistentDemoBuffer.data.buffered_composition_id);
+
 const player = await call("/");
 assert.match(player.data.raw, /data-step="v0\.4-step-2"/);
 assert.match(player.data.raw, /class ScoreRenderer/);
