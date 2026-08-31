@@ -141,6 +141,43 @@ export async function runFalCassetteAI({ apiKey, prompt, durationSeconds, client
   };
 }
 
+export async function runFalStableAudio({ apiKey, prompt, durationSeconds, clientFactory = createFalClient, fetcher = fetch }) {
+  const startedAt = Date.now();
+  const client = clientFactory({ credentials: apiKey });
+  const duration = Math.max(1, Math.min(30, Math.round(durationSeconds)));
+  const result = await client.subscribe("fal-ai/stable-audio", {
+    input: {
+      prompt,
+      seconds_total: duration,
+    },
+  });
+  const sourceUrl = result?.data?.audio_file?.url;
+  if (!sourceUrl) throw new Error("provider_audio_missing");
+  const audioResponse = await fetcher(sourceUrl);
+  if (!audioResponse.ok) throw new Error("provider_audio_fetch_failed");
+  const bytes = new Uint8Array(await audioResponse.arrayBuffer());
+  const responseType = audioResponse.headers.get("content-type") || result?.data?.audio_file?.content_type || "application/octet-stream";
+  if (bytes.byteLength <= 44 || (!validateWav(bytes) && !responseType.startsWith("audio/"))) {
+    throw new Error("provider_audio_invalid");
+  }
+  return {
+    bytes,
+    contentType: validateWav(bytes) ? "audio/wav" : responseType,
+    providerRequestId: result.requestId ?? null,
+    durationSeconds: duration,
+    latencyMs: Date.now() - startedAt,
+    costMicrousd: 0,
+    provenance: {
+      provider: MUSIC_PROVIDERS.FAL_STABLE_AUDIO,
+      model: "fal-ai/stable-audio",
+      pricing_basis: "fal published $0 per compute second",
+      terms_uri: "https://fal.ai/legal/terms-of-service",
+      api_terms_uri: "https://fal.ai/legal/api-services",
+      source_host: new URL(sourceUrl).hostname,
+    },
+  };
+}
+
 function createSilenceWav(durationSeconds, sampleRate = 8000) {
   const seconds = Math.max(1, Math.floor(durationSeconds));
   const dataSize = seconds * sampleRate;
@@ -231,7 +268,7 @@ export class ChannelConductor {
   }
 
   async generateWithProvider(state, prompt, rawKey, durationSeconds) {
-    if (state.policy.provider !== MUSIC_PROVIDERS.FAL_CASSETTEAI) {
+    if (![MUSIC_PROVIDERS.FAL_CASSETTEAI, MUSIC_PROVIDERS.FAL_STABLE_AUDIO].includes(state.policy.provider)) {
       throw new Error("music_provider_unsupported");
     }
     const expectedRef = await credentialRefFor(state.policy.provider, rawKey);
@@ -253,6 +290,9 @@ export class ChannelConductor {
         prompt: providerPrompt,
         durationSeconds,
       });
+    }
+    if (state.policy.provider === MUSIC_PROVIDERS.FAL_STABLE_AUDIO) {
+      return runFalStableAudio({ apiKey: rawKey, prompt: providerPrompt, durationSeconds });
     }
     return runFalCassetteAI({ apiKey: rawKey, prompt: providerPrompt, durationSeconds });
   }
@@ -528,7 +568,8 @@ export class ChannelConductor {
             rawKey,
             body.durationSeconds ?? 30,
           );
-          const assetKey = channelAssetKey(state.channelId, `generated/${scheduled.job.id}.wav`);
+          const extension = generated.contentType === "audio/wav" ? "wav" : "audio";
+          const assetKey = channelAssetKey(state.channelId, `generated/${scheduled.job.id}.${extension}`);
           await this.env.ASSETS.put(assetKey, generated.bytes, {
             httpMetadata: { contentType: generated.contentType || "audio/wav" },
             customMetadata: {
@@ -689,7 +730,7 @@ export default {
           r2: Boolean(env.ASSETS),
           workersAI: Boolean(env.AI),
         },
-        musicProviders: [MUSIC_PROVIDERS.FIXTURE, MUSIC_PROVIDERS.FAL_CASSETTEAI],
+        musicProviders: [MUSIC_PROVIDERS.FIXTURE, MUSIC_PROVIDERS.FAL_CASSETTEAI, MUSIC_PROVIDERS.FAL_STABLE_AUDIO],
       });
     }
 
