@@ -6,6 +6,7 @@ import {
   buildComposerContext,
   composeWithWorkersAI,
   composeChannelScore,
+  MAX_COMPOSER_ATTEMPTS,
 } from "../src/composer.js";
 
 function trusted(overrides = {}) {
@@ -22,9 +23,23 @@ function validRawScoreJson(overrides = {}) {
     bars: 4,
     sections: [{ startBar: 0, lengthBars: 4, label: "loop" }],
     tracks: [
-      { id: "lead", patch: "saw_lead", events: [{ pitch: 62, start: 0, duration: 1, velocity: 0.7 }] },
+      // A sustained note spanning the whole declared timeline: schema-valid
+      // AND passes the musical temporal-coverage quality gate, so tests
+      // exercising the "healthy model response" path don't accidentally
+      // trip the coverage gate added alongside it.
+      { id: "lead", patch: "saw_lead", events: [{ pitch: 62, start: 0, duration: 16, velocity: 0.7 }] },
     ],
     continuity: { motifIds: ["m1"], energy: 0.6 },
+    ...overrides,
+  });
+}
+
+function sparseRawScoreJson(overrides = {}) {
+  return validRawScoreJson({
+    bars: 16,
+    tracks: [
+      { id: "lead", patch: "saw_lead", events: [{ pitch: 60, start: 0, duration: 1, velocity: 0.7 }] },
+    ],
     ...overrides,
   });
 }
@@ -173,4 +188,72 @@ test("composeChannelScore does not fall back when the model response is valid", 
   assert.equal(result.fellBack, false);
   assert.equal(result.source, "workers-ai");
   assert.equal(result.fallbackReason, null);
+  assert.equal(result.attempts, 1);
+});
+
+test("composeChannelScore rejects an obviously placeholder/sparse model score and falls back to fixture", async () => {
+  const env = fakeEnvWithResponse(sparseRawScoreJson());
+  const result = await composeChannelScore(env, trusted(), buildComposerContext({}));
+
+  assert.equal(result.fellBack, true);
+  assert.equal(result.source, "fixture");
+  assert.match(result.fallbackReason, /insufficient_temporal_coverage|no_final_section_activity/);
+  assert.equal(result.score.schemaVersion, SCORE_SCHEMA_VERSION);
+});
+
+test("composeChannelScore retries the real composer a bounded number of times before falling back", async () => {
+  let calls = 0;
+  const env = {
+    AI: {
+      run: async () => {
+        calls += 1;
+        // Always sparse: every attempt should fail the quality gate.
+        return { response: sparseRawScoreJson({ compositionId: `sparse-${calls}` }) };
+      },
+    },
+  };
+
+  const result = await composeChannelScore(env, trusted(), buildComposerContext({}));
+
+  assert.equal(calls, MAX_COMPOSER_ATTEMPTS);
+  assert.equal(result.fellBack, true);
+  assert.equal(result.source, "fixture");
+  assert.equal(result.attempts, MAX_COMPOSER_ATTEMPTS);
+});
+
+test("composeChannelScore succeeds via retry as soon as a candidate passes the quality gate", async () => {
+  let calls = 0;
+  const env = {
+    AI: {
+      run: async () => {
+        calls += 1;
+        const text = calls === 1
+          ? sparseRawScoreJson({ compositionId: "attempt-1-sparse" })
+          : validRawScoreJson({ compositionId: "attempt-2-good" });
+        return { response: text };
+      },
+    },
+  };
+
+  const result = await composeChannelScore(env, trusted(), buildComposerContext({}));
+
+  assert.ok(calls <= MAX_COMPOSER_ATTEMPTS);
+  assert.equal(result.fellBack, false);
+  assert.equal(result.source, "workers-ai");
+  assert.equal(result.score.compositionId, "attempt-2-good");
+});
+
+test("composeChannelScore never exceeds MAX_COMPOSER_ATTEMPTS even when explicitly asked for more", async () => {
+  let calls = 0;
+  const env = {
+    AI: {
+      run: async () => {
+        calls += 1;
+        return { response: sparseRawScoreJson({ compositionId: `sparse-${calls}` }) };
+      },
+    },
+  };
+
+  await composeChannelScore(env, trusted(), buildComposerContext({}), { maxAttempts: 999 });
+  assert.equal(calls, MAX_COMPOSER_ATTEMPTS);
 });
