@@ -343,6 +343,16 @@ test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity an
   assert.match(html, /applyPlaybackSnapshot/);
   assert.match(html, /rejoinLiveState/);
   assert.match(html, /position synced/);
+  assert.match(html, /async function resyncLiveAfterPlay\(session\)/);
+  const playStart = html.indexOf("async function play(){");
+  const unlockIndex = html.indexOf("await renderer.unlockFromGesture()", playStart);
+  const firstRendererPlayIndex = html.indexOf("await renderer.play()", playStart);
+  const liveResyncIndex = html.indexOf("void resyncLiveAfterPlay(stationState.session)", playStart);
+  assert.ok(playStart >= 0);
+  assert.ok(unlockIndex > playStart, "Play must unlock WebAudio inside the tap handler");
+  assert.ok(firstRendererPlayIndex > unlockIndex, "audible scheduling must begin immediately after WebAudio unlock");
+  assert.ok(liveResyncIndex > firstRendererPlayIndex, "live network rejoin must happen only after audible scheduling begins");
+  assert.match(html, /resumeIfPlaying&&wasPlaying&&!payload\.playback\.ended/);
   assert.match(html, /params\.has\("channel"\)&&params\.has\("creator"\)/);
   assert.match(html, /const livePlayback=!viewState\.replaying/);
   assert.match(html, /stationState\.autoAdvance=livePlayback/);
