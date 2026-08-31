@@ -38,6 +38,16 @@ jobs:
           echo "CREATOR=$CREATOR" >> "$GITHUB_ENV"
           export TOKEN CHANNEL CREATOR
           node scripts/v03-real-fal-acceptance-patch.mjs
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("src/index.js")
+          source = path.read_text()
+          old = 'if (status === 401 || status === 403) return "provider_auth_failed";'
+          new = 'if (status === 401) return "provider_auth_failed_401";\n  if (status === 403) return "provider_auth_forbidden_403";'
+          if old not in source:
+              raise SystemExit("provider_status_marker_missing")
+          path.write_text(source.replace(old, new, 1))
+          PY
           node --check src/index.js
 
       - name: Deploy temporary acceptance harness
@@ -113,7 +123,7 @@ jobs:
             BODY="${BODY//$'\n'/'%0A'}"
             echo "::notice title=V0.3 Fal acceptance response::$BODY"
           else
-            echo "::notice title=V0.3 Fal acceptance response::{\"error\":\"acceptance_json_missing\"}"
+            echo '::notice title=V0.3 Fal acceptance response::{"error":"acceptance_json_missing"}'
           fi
 
       - name: Restore canonical V0.3 source
