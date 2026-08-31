@@ -1,6 +1,6 @@
 name: V0.3 Real Fal Acceptance
 
-on:
+"on":
   workflow_dispatch:
 
 permissions:
@@ -49,89 +49,89 @@ jobs:
           channel = os.environ["CHANNEL"]
           creator = os.environ["CREATOR"]
 
-          helper = f'''
-async function runV03FalAcceptance(env) {{
-  if (!env.FAL_API_KEY) {{
-    return json({{ ok: false, error: "operator_provider_key_unavailable" }}, {{ status: 503 }});
-  }}
+          helper = f"""
+          async function runV03FalAcceptance(env) {{
+            if (!env.FAL_API_KEY) {{
+              return json({{ ok: false, error: "operator_provider_key_unavailable" }}, {{ status: 503 }});
+            }}
 
-  const channelId = {channel!r};
-  const creatorId = {creator!r};
+            const channelId = {channel!r};
+            const creatorId = {creator!r};
 
-  async function channelCall(tail, {{ method = "GET", body, providerKey }} = {{}}) {{
-    const headers = new Headers({{ "x-creator-id": creatorId }});
-    if (providerKey) headers.set("x-provider-key", providerKey);
-    if (body !== undefined) headers.set("content-type", "application/json");
-    const request = new Request(`https://acceptance.internal/api/channels/${{channelId}}${{tail}}`, {{
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }});
-    const response = await proxyChannelRequest(request, env, {{ channelId, tail }});
-    const data = await response.json();
-    return {{ response, data }};
-  }}
+            async function channelCall(tail, {{ method = "GET", body, providerKey }} = {{}}) {{
+              const headers = new Headers({{ "x-creator-id": creatorId }});
+              if (providerKey) headers.set("x-provider-key", providerKey);
+              if (body !== undefined) headers.set("content-type", "application/json");
+              const request = new Request(`https://acceptance.internal/api/channels/${{channelId}}${{tail}}`, {{
+                method,
+                headers,
+                body: body === undefined ? undefined : JSON.stringify(body),
+              }});
+              const response = await proxyChannelRequest(request, env, {{ channelId, tail }});
+              const data = await response.json();
+              return {{ response, data }};
+            }}
 
-  const init = await channelCall("/init", {{
-    method: "POST",
-    body: {{
-      creatorId,
-      policy: {{
-        bufferTargetSeconds: 30,
-        generationCapPerHour: 1,
-      }},
-    }},
-  }});
-  if (!init.response.ok) {{
-    return json({{ ok: false, step: "init", detail: init.data }}, {{ status: init.response.status }});
-  }}
+            const init = await channelCall("/init", {{
+              method: "POST",
+              body: {{
+                creatorId,
+                policy: {{
+                  bufferTargetSeconds: 30,
+                  generationCapPerHour: 1,
+                }},
+              }},
+            }});
+            if (!init.response.ok) {{
+              return json({{ ok: false, step: "init", detail: init.data }}, {{ status: init.response.status }});
+            }}
 
-  const provider = await channelCall("/provider", {{
-    method: "POST",
-    providerKey: env.FAL_API_KEY,
-    body: {{
-      provider: "fal-cassetteai",
-      generationCapPerHour: 1,
-      generationCapPerDay: 1,
-      bufferTargetSeconds: 30,
-    }},
-  }});
-  if (!provider.response.ok) {{
-    return json({{ ok: false, step: "provider", detail: provider.data }}, {{ status: provider.response.status }});
-  }}
+            const provider = await channelCall("/provider", {{
+              method: "POST",
+              providerKey: env.FAL_API_KEY,
+              body: {{
+                provider: "fal-cassetteai",
+                generationCapPerHour: 1,
+                generationCapPerDay: 1,
+                bufferTargetSeconds: 30,
+              }},
+            }});
+            if (!provider.response.ok) {{
+              return json({{ ok: false, step: "provider", detail: provider.data }}, {{ status: provider.response.status }});
+            }}
 
-  const prompt = await channelCall("/prompts", {{
-    method: "POST",
-    body: {{
-      id: `v03-real-fal-${{channelId}}`,
-      idempotencyKey: `v03-real-fal-${{channelId}}`,
-      userId: "operator:v03-acceptance",
-      text: "Original instrumental midnight synthwave radio track with warm analog bass, glassy arpeggios, atmospheric pads, and a dramatic futuristic transition. No imitation of any existing artist.",
-      votes: 0,
-    }},
-  }});
-  if (!prompt.response.ok) {{
-    return json({{ ok: false, step: "prompt", detail: prompt.data }}, {{ status: prompt.response.status }});
-  }}
+            const prompt = await channelCall("/prompts", {{
+              method: "POST",
+              body: {{
+                id: `v03-real-fal-${{channelId}}`,
+                idempotencyKey: `v03-real-fal-${{channelId}}`,
+                userId: "operator:v03-acceptance",
+                text: "Original instrumental midnight synthwave radio track with warm analog bass, glassy arpeggios, atmospheric pads, and a dramatic futuristic transition. No imitation of any existing artist.",
+                votes: 0,
+              }},
+            }});
+            if (!prompt.response.ok) {{
+              return json({{ ok: false, step: "prompt", detail: prompt.data }}, {{ status: prompt.response.status }});
+            }}
 
-  const generation = await channelCall("/generation/next", {{
-    method: "POST",
-    providerKey: env.FAL_API_KEY,
-    body: {{ durationSeconds: 30 }},
-  }});
-  if (!generation.response.ok) {{
-    return json({{ ok: false, step: "generation", detail: generation.data }}, {{ status: generation.response.status }});
-  }}
+            const generation = await channelCall("/generation/next", {{
+              method: "POST",
+              providerKey: env.FAL_API_KEY,
+              body: {{ durationSeconds: 30 }},
+            }});
+            if (!generation.response.ok) {{
+              return json({{ ok: false, step: "generation", detail: generation.data }}, {{ status: generation.response.status }});
+            }}
 
-  return json({{
-    ok: true,
-    channel_id: channelId,
-    creator_id: creatorId,
-    credential_ref: provider.data?.policy?.credentialRef ?? null,
-    generation: generation.data,
-  }}, {{ status: 201 }});
-}}
-'''
+            return json({{
+              ok: true,
+              channel_id: channelId,
+              creator_id: creatorId,
+              credential_ref: provider.data?.policy?.credentialRef ?? null,
+              generation: generation.data,
+            }}, {{ status: 201 }});
+          }}
+          """
 
           marker = "\nexport default {\n"
           if marker not in source:
@@ -139,13 +139,13 @@ async function runV03FalAcceptance(env) {{
           source = source.replace(marker, "\n" + helper + marker, 1)
 
           route_marker = '    const url = new URL(request.url);\n\n    if (request.method === "GET" && url.pathname === "/health") {'
-          route_replacement = f'''    const url = new URL(request.url);
+          route_replacement = f"""    const url = new URL(request.url);
 
-    if (request.method === "POST" && url.pathname === "/__v03_fal_acceptance_{token}") {{
-      return runV03FalAcceptance(env);
-    }}
+              if (request.method === "POST" && url.pathname === "/__v03_fal_acceptance_{token}") {{
+                return runV03FalAcceptance(env);
+              }}
 
-    if (request.method === "GET" && url.pathname === "/health") {{'''
+              if (request.method === "GET" && url.pathname === "/health") {{"""
           if route_marker not in source:
               raise SystemExit("fetch_route_marker_missing")
           source = source.replace(route_marker, route_replacement, 1)
@@ -166,9 +166,7 @@ async function runV03FalAcceptance(env) {{
         shell: bash
         run: |
           set -euo pipefail
-
-          HTTP="$(curl -sS -o acceptance.json -w '%{http_code}' \
-            -X POST "$BASE_URL/__v03_fal_acceptance_$TOKEN")"
+          HTTP="$(curl -sS -o acceptance.json -w '%{http_code}' -X POST "$BASE_URL/__v03_fal_acceptance_$TOKEN")"
           python3 -m json.tool acceptance.json
           test "$HTTP" = "201"
 
@@ -198,8 +196,7 @@ async function runV03FalAcceptance(env) {{
               fh.write(f'RECEIPT_ID={receipt["receipt_id"]}\n')
           PY
 
-          curl -sS "$BASE_URL/api/channels/$CHANNEL/state" \
-            -H "x-creator-id: $CREATOR" > state.json
+          curl -sS "$BASE_URL/api/channels/$CHANNEL/state" -H "x-creator-id: $CREATOR" > state.json
           python3 - <<'PY'
           import json, os
           data = json.load(open("state.json"))
@@ -216,9 +213,7 @@ async function runV03FalAcceptance(env) {{
           assert all(t["assetKey"].startswith(f'channels/{os.environ["CHANNEL"]}/') for t in tracks)
           PY
 
-          FOREIGN_HTTP="$(curl -sS -o foreign.json -w '%{http_code}' \
-            "$BASE_URL/api/channels/$CHANNEL/state" \
-            -H "x-creator-id: creator-not-owner")"
+          FOREIGN_HTTP="$(curl -sS -o foreign.json -w '%{http_code}' "$BASE_URL/api/channels/$CHANNEL/state" -H "x-creator-id: creator-not-owner")"
           test "$FOREIGN_HTTP" = "400"
           python3 - <<'PY'
           import json
@@ -227,10 +222,7 @@ async function runV03FalAcceptance(env) {{
           assert data["error"] == "channel_owner_required"
           PY
 
-          npx wrangler r2 object get \
-            "infinite-radio-assets/$ASSET_KEY" \
-            --file acceptance.wav \
-            --remote
+          npx wrangler r2 object get "infinite-radio-assets/$ASSET_KEY" --file acceptance.wav --remote
 
           python3 - <<'PY'
           from pathlib import Path
@@ -242,10 +234,7 @@ async function runV03FalAcceptance(env) {{
           PY
 
           SQL="SELECT receipt_id, channel_id, generation_id, provider, model, provider_request_id, duration_seconds, latency_ms, cost_microusd, terms_uri, provenance_json, created_at FROM provider_receipts WHERE channel_id='$CHANNEL' ORDER BY created_at DESC LIMIT 1;"
-          npx wrangler d1 execute infinite-radio-db \
-            --remote \
-            --command "$SQL" \
-            --json > receipt.json
+          npx wrangler d1 execute infinite-radio-db --remote --command "$SQL" --json > receipt.json
 
           python3 - <<'PY'
           import json, os
@@ -288,8 +277,7 @@ async function runV03FalAcceptance(env) {{
         shell: bash
         run: |
           set -euo pipefail
-          HTTP="$(curl -sS -o restored.json -w '%{http_code}' \
-            -X POST "$BASE_URL/__v03_fal_acceptance_$TOKEN")"
+          HTTP="$(curl -sS -o restored.json -w '%{http_code}' -X POST "$BASE_URL/__v03_fal_acceptance_$TOKEN")"
           test "$HTTP" = "404"
           curl -sS "$BASE_URL/health" | python3 -m json.tool
 
