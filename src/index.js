@@ -241,6 +241,21 @@ export class ChannelConductor {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
+    this.compositionMutationTail = Promise.resolve();
+  }
+
+  async runCompositionMutation(work) {
+    const previous = this.compositionMutationTail;
+    let release;
+    this.compositionMutationTail = new Promise((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+    }
   }
 
   async load(channelId, creatorId = null) {
@@ -664,32 +679,73 @@ export class ChannelConductor {
         });
       }
 
-      if (request.method === "POST" && url.pathname === "/score/next") {
+      if (request.method === "POST" && url.pathname === "/score/prebuffer") {
         const body = (await readJson(request)) ?? {};
-        const context = buildComposerContext(state, body.listenerIntent ?? {});
-        const result = await composeChannelScore(this.env, { channelId: state.channelId, creatorId: state.creatorId }, context, {
-          model: body.model,
+        const prebuffered = await this.runCompositionMutation(async () => {
+          let freshState = await this.load(channelId, creatorId);
+          assertChannelOwner(freshState, creatorId);
+          if (compositionBufferCount(freshState) >= 1) {
+            return { created: false, result: null, state: freshState };
+          }
+          const context = buildComposerContext(freshState, body.listenerIntent ?? {});
+          const result = await composeChannelScore(this.env, { channelId: freshState.channelId, creatorId: freshState.creatorId }, context, {
+            model: body.model,
+          });
+          freshState = queueComposition(freshState, result.score);
+          await this.persist(freshState);
+          return { created: true, result, state: freshState };
         });
-        const queued = queueComposition(state, result.score);
-        await this.persist(queued);
         return json(
           {
             ok: true,
-            source: result.source,
-            fell_back: result.fellBack,
-            fallback_reason: result.fallbackReason,
-            score: result.score,
-            composition_buffer_count: compositionBufferCount(queued),
-            state: publicState(queued),
+            created: prebuffered.created,
+            source: prebuffered.result?.source ?? null,
+            fell_back: prebuffered.result?.fellBack ?? false,
+            fallback_reason: prebuffered.result?.fallbackReason ?? null,
+            buffered_composition_id: prebuffered.state.compositionQueue[0]?.compositionId ?? null,
+            composition_buffer_count: compositionBufferCount(prebuffered.state),
+            state: publicState(prebuffered.state),
+          },
+          { status: prebuffered.created ? 201 : 200 },
+        );
+      }
+
+      if (request.method === "POST" && url.pathname === "/score/next") {
+        const body = (await readJson(request)) ?? {};
+        const generated = await this.runCompositionMutation(async () => {
+          let freshState = await this.load(channelId, creatorId);
+          assertChannelOwner(freshState, creatorId);
+          const context = buildComposerContext(freshState, body.listenerIntent ?? {});
+          const result = await composeChannelScore(this.env, { channelId: freshState.channelId, creatorId: freshState.creatorId }, context, {
+            model: body.model,
+          });
+          freshState = queueComposition(freshState, result.score);
+          await this.persist(freshState);
+          return { result, state: freshState };
+        });
+        return json(
+          {
+            ok: true,
+            source: generated.result.source,
+            fell_back: generated.result.fellBack,
+            fallback_reason: generated.result.fallbackReason,
+            score: generated.result.score,
+            composition_buffer_count: compositionBufferCount(generated.state),
+            state: publicState(generated.state),
           },
           { status: 201 },
         );
       }
 
       if (request.method === "POST" && url.pathname === "/score/select") {
-        const selection = selectNextComposition(state);
-        if (!selection.selected) throw new Error("composition_queue_empty");
-        await this.persist(selection.state);
+        const selection = await this.runCompositionMutation(async () => {
+          const freshState = await this.load(channelId, creatorId);
+          assertChannelOwner(freshState, creatorId);
+          const next = selectNextComposition(freshState);
+          if (!next.selected) throw new Error("composition_queue_empty");
+          await this.persist(next.state);
+          return next;
+        });
         return json({
           ok: true,
           score: selection.selected,
@@ -783,7 +839,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") {
       return new Response(
         `<!doctype html>
-<html lang="en" data-step="v0.3.1-step-5">
+<html lang="en" data-step="v0.3.1-step-6">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -811,13 +867,13 @@ export default {
 </head>
 <body>
   <div class="shell">
-    <header class="topbar"><div class="brand"><span class="live-dot"></span>Infinite Radio</div><div class="version">V0.3.1 · SCORE PLAYER</div></header>
+    <header class="topbar"><div class="brand"><span class="live-dot"></span>Infinite Radio</div><div class="version">V0.3.1 · PREBUFFER PLAYER</div></header>
     <section class="setup" aria-label="Channel connection"><input id="channel" autocomplete="off" aria-label="Channel ID" placeholder="channel id"><input id="creator" autocomplete="off" aria-label="Creator ID" placeholder="creator id"><button id="connect" class="primary">Open channel</button></section>
     <main>
-      <section class="now"><div><div class="eyebrow">Now playing</div><div id="score-title" class="title">No score loaded</div><div id="score-meta" class="meta"><span>Validated infinite-radio-score-v1</span></div></div><div class="chips"><span id="schema-chip" class="chip">schema · waiting</span><span id="source-chip" class="chip">source · waiting</span><span id="provenance-chip" class="chip">composer · waiting</span></div></section>
+      <section class="now"><div><div class="eyebrow">Now playing</div><div id="score-title" class="title">No score loaded</div><div id="score-meta" class="meta"><span>Validated infinite-radio-score-v1</span></div></div><div class="chips"><span id="schema-chip" class="chip">schema · waiting</span><span id="source-chip" class="chip">source · waiting</span><span id="provenance-chip" class="chip">composer · waiting</span><span id="buffer-chip" class="chip">buffer · empty</span></div></section>
       <section class="canvas-wrap" aria-label="Read-only score canvas"><canvas id="score-canvas"></canvas><div id="empty" class="empty"><div><strong>Open a channel to begin</strong>This V0.3.1 canvas is read/play only. Editing starts in V0.5.</div></div></section>
     </main>
-    <footer class="transport"><div class="transport-card"><div class="controls"><button id="play" class="round" disabled aria-label="Play">▶</button><button id="pause" class="round alt" disabled aria-label="Pause">Ⅱ</button><button id="stop" class="round alt" disabled aria-label="Stop">■</button></div><div class="timeline"><div class="progress"><span id="progress"></span></div><div class="time"><span id="position">0:00</span><span id="duration">0:00</span></div></div><div class="actions"><span id="status" class="status">Ready</span><button id="next" class="secondary" disabled>Generate next</button></div></div></footer>
+    <footer class="transport"><div class="transport-card"><div class="controls"><button id="play" class="round" disabled aria-label="Play">▶</button><button id="pause" class="round alt" disabled aria-label="Pause">Ⅱ</button><button id="stop" class="round alt" disabled aria-label="Stop">■</button></div><div class="timeline"><div class="progress"><span id="progress"></span></div><div class="time"><span id="position">0:00</span><span id="duration">0:00</span></div></div><div class="actions"><span id="status" class="status">Ready</span><button id="next" class="secondary" disabled>Buffer next</button></div></div></footer>
   </div>
   <script>
     "use strict";
@@ -858,17 +914,22 @@ export default {
     const renderer=new ScoreRenderer();
     const canonicalState={score:null,source:null,fellBack:false,fallbackReason:null};
     const viewState={channelId:null,creatorId:null,connected:false};
+    const stationState={session:0,queuedCount:0,prebufferPromise:null,advanceInFlight:false,autoAdvance:false,endedHandled:false};
     const params=new URLSearchParams(location.search);$("channel").value=params.get("channel")||"demo-radio";$("creator").value=params.get("creator")||"demo-creator";
     function setStatus(text){$("status").textContent=text;}
     function setControls(enabled){$("play").disabled=!enabled;$("pause").disabled=!enabled;$("stop").disabled=!enabled;}
-    function loadScore(score,meta){const clean=deepFreeze(structuredClone(assertPlayableScore(score)));canonicalState.score=clean;canonicalState.source=meta&&meta.source||"persisted";canonicalState.fellBack=Boolean(meta&&meta.fellBack);canonicalState.fallbackReason=meta&&meta.fallbackReason||null;renderer.load(clean);$("empty").hidden=true;$("score-title").textContent=clean.compositionId;$("score-meta").innerHTML="";[clean.bpm+" BPM",clean.key.root+" "+clean.key.mode,clean.bars+" bars",clean.tracks.length+" tracks"].forEach(text=>{const span=document.createElement("span");span.textContent=text;$("score-meta").appendChild(span);});$("schema-chip").textContent="schema · "+clean.schemaVersion;$("schema-chip").className="chip good";$("source-chip").textContent="source · "+canonicalState.source+(canonicalState.fellBack?" fallback":"");$("source-chip").className=canonicalState.fellBack?"chip warn":"chip good";$("provenance-chip").textContent="composer · "+(clean.provenance&&clean.provenance.composer||"unknown");$("duration").textContent=fmt(clean.durationSeconds);setControls(true);setStatus(canonicalState.fellBack?"Fallback: "+(canonicalState.fallbackReason||"fixture"):"Score ready");draw();}
+    function setStationBuffer(count){stationState.queuedCount=Math.max(0,Number(count)||0);$("buffer-chip").textContent="buffer · "+(stationState.queuedCount?stationState.queuedCount+" ready":"empty");$("buffer-chip").className=stationState.queuedCount?"chip good":"chip warn";}
+    function loadScore(score,meta){const clean=deepFreeze(structuredClone(assertPlayableScore(score)));canonicalState.score=clean;canonicalState.source=meta&&meta.source||clean.provenance&&clean.provenance.composer||"persisted";canonicalState.fellBack=Boolean(meta&&meta.fellBack);canonicalState.fallbackReason=meta&&meta.fallbackReason||null;stationState.endedHandled=false;renderer.load(clean);$("empty").hidden=true;$("score-title").textContent=clean.compositionId;$("score-meta").innerHTML="";[clean.bpm+" BPM",clean.key.root+" "+clean.key.mode,clean.bars+" bars",clean.tracks.length+" tracks"].forEach(text=>{const span=document.createElement("span");span.textContent=text;$("score-meta").appendChild(span);});$("schema-chip").textContent="schema · "+clean.schemaVersion;$("schema-chip").className="chip good";$("source-chip").textContent="source · "+canonicalState.source+(canonicalState.fellBack?" fallback":"");$("source-chip").className=canonicalState.fellBack?"chip warn":"chip good";$("provenance-chip").textContent="composer · "+(clean.provenance&&clean.provenance.composer||"unknown");$("duration").textContent=fmt(clean.durationSeconds);setControls(true);setStatus(canonicalState.fellBack?"Fallback: "+(canonicalState.fallbackReason||"fixture"):"Score ready");draw();}
     async function api(tail,method,body){const url="/api/channels/"+encodeURIComponent(viewState.channelId)+tail;const headers={"x-creator-id":viewState.creatorId};if(body!==undefined)headers["content-type"]="application/json";const response=await fetch(url,{method:method||"GET",headers,body:body===undefined?undefined:JSON.stringify(body)});const payload=await response.json();if(!response.ok||payload.ok===false)throw new Error(payload.error||"request_failed");return payload;}
-    async function connect(){viewState.channelId=$("channel").value.trim();viewState.creatorId=$("creator").value.trim();if(!viewState.channelId||!viewState.creatorId){setStatus("Channel and creator are required");return;}setStatus("Opening channel…");try{await api("/init","POST",{creatorId:viewState.creatorId});const payload=await api("/state");viewState.connected=true;$("next").disabled=false;const queue=payload.state&&payload.state.compositionQueue||[];if(queue.length)loadScore(queue[0],{source:"persisted queue"});else{$("empty").hidden=false;$("empty").innerHTML="<div><strong>Channel ready</strong>Generate the next validated composition to hear it locally.</div>";setStatus("Channel ready");}}catch(error){setStatus(error.message);}}
-    async function generateNext(){if(!viewState.connected)return;$("next").disabled=true;setStatus("Composing with Workers AI…");try{const payload=await api("/score/next","POST",{listenerIntent:{surface:"step5_player"}});loadScore(payload.score,{source:payload.source,fellBack:payload.fell_back,fallbackReason:payload.fallback_reason});}catch(error){setStatus(error.message);}finally{$("next").disabled=false;}}
+    async function ensureNextBuffered(session=stationState.session){if(!viewState.connected||session!==stationState.session)return false;if(stationState.queuedCount>0)return true;const active=stationState.prebufferPromise;if(active&&active.session===session)return active.promise;const pending=(async()=>{setStatus("Preparing next composition…");try{const payload=await api("/score/prebuffer","POST",{listenerIntent:{surface:"step6_prebuffer"}});if(session!==stationState.session)return false;setStationBuffer(payload.composition_buffer_count);setStatus(payload.created?(payload.fell_back?"Next score buffered via fixture fallback":"Next score buffered"):"Next score already buffered");return stationState.queuedCount>0;}catch(error){if(session===stationState.session)setStatus("Prebuffer retry available: "+error.message);return false;}})();stationState.prebufferPromise={session,promise:pending};try{return await pending;}finally{if(stationState.prebufferPromise&&stationState.prebufferPromise.promise===pending)stationState.prebufferPromise=null;}}
+    async function selectBufferedScore(session,{autoplay=false}={}){const payload=await api("/score/select","POST");if(session!==stationState.session)return false;setStationBuffer(payload.composition_buffer_count);loadScore(payload.score,{source:payload.score&&payload.score.provenance&&payload.score.provenance.composer||"persisted"});void ensureNextBuffered(session);if(autoplay){await renderer.play();stationState.autoAdvance=true;setStatus("Playing · next score buffering");}return true;}
+    async function connect(){const session=++stationState.session;renderer.stop();stationState.autoAdvance=false;stationState.endedHandled=false;viewState.connected=false;setStationBuffer(0);viewState.channelId=$("channel").value.trim();viewState.creatorId=$("creator").value.trim();if(!viewState.channelId||!viewState.creatorId){setStatus("Channel and creator are required");return;}setStatus("Opening channel…");try{await api("/init","POST",{creatorId:viewState.creatorId});const payload=await api("/state");if(session!==stationState.session)return;viewState.connected=true;$("next").disabled=false;setStationBuffer((payload.state&&payload.state.compositionQueue||[]).length);if(stationState.queuedCount<1)await ensureNextBuffered(session);if(session!==stationState.session)return;if(stationState.queuedCount<1)throw new Error("composition_prebuffer_unavailable");await selectBufferedScore(session);setStatus("Station ready · next score buffering");}catch(error){if(session===stationState.session)setStatus(error.message);}}
+    async function bufferNext(){if(!viewState.connected)return;$("next").disabled=true;try{if(stationState.queuedCount>0){setStatus("Next composition already buffered");return;}await ensureNextBuffered(stationState.session);}finally{$("next").disabled=false;}}
+    async function advanceAfterEnd(session){if(stationState.advanceInFlight||session!==stationState.session)return;stationState.advanceInFlight=true;setStatus("Advancing to buffered composition…");try{if(stationState.queuedCount<1)await ensureNextBuffered(session);if(session!==stationState.session)return;if(stationState.queuedCount<1)throw new Error("composition_prebuffer_unavailable");await selectBufferedScore(session,{autoplay:true});}catch(error){stationState.autoAdvance=false;if(session===stationState.session)setStatus("Station paused: "+error.message);}finally{stationState.advanceInFlight=false;}}
     function draw(){const canvas=$("score-canvas"),ctx=canvas.getContext("2d"),rect=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2),width=Math.max(1,Math.floor(rect.width*dpr)),height=Math.max(1,Math.floor(rect.height*dpr));if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);const score=canonicalState.score;if(!score)return;const pad=18,laneH=(rect.height-pad*2)/score.tracks.length,qpb=(score.timeSignature.beatsPerBar*(4/score.timeSignature.beatUnit)),totalBeats=score.bars*qpb;ctx.strokeStyle="#232334";ctx.lineWidth=1;for(let bar=0;bar<=score.bars;bar+=1){const x=pad+(rect.width-pad*2)*(bar/score.bars);ctx.beginPath();ctx.moveTo(x,pad);ctx.lineTo(x,rect.height-pad);ctx.stroke();}score.tracks.forEach((track,index)=>{const y=pad+laneH*index;ctx.fillStyle="hsl("+((index*67+235)%360)+" 72% 65%)";ctx.globalAlpha=.82;(track.events||[]).forEach(event=>{const x=pad+(rect.width-pad*2)*(event.start/totalBeats),w=Math.max(3,(rect.width-pad*2)*(event.duration/totalBeats));ctx.fillRect(x,y+laneH*.34,w,Math.max(3,laneH*.3));});(track.drumEvents||[]).forEach(event=>{const x=pad+(rect.width-pad*2)*(event.start/totalBeats);ctx.beginPath();ctx.arc(x,y+laneH*.5,Math.max(2,laneH*.11),0,Math.PI*2);ctx.fill();});ctx.globalAlpha=1;ctx.fillStyle="#858598";ctx.font="11px system-ui";ctx.fillText(track.id,pad+4,y+13);});const playhead=renderer.duration?renderer.position/renderer.duration:0;const px=pad+(rect.width-pad*2)*playhead;ctx.strokeStyle="#ffffff";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(px,pad);ctx.lineTo(px,rect.height-pad);ctx.stroke();}
-    async function play(){try{await renderer.play();setStatus("Playing locally");}catch(error){setStatus(error.message);}}
-    function tick(){const duration=renderer.duration||0,position=renderer.position;$("position").textContent=fmt(position);$("progress").style.width=(duration?clamp(position/duration*100,0,100):0)+"%";draw();requestAnimationFrame(tick);}requestAnimationFrame(tick);
-    $("connect").addEventListener("click",connect);$("next").addEventListener("click",generateNext);$("play").addEventListener("click",play);$("pause").addEventListener("click",()=>{renderer.pause();setStatus("Paused");});$("stop").addEventListener("click",()=>{renderer.stop();setStatus("Stopped");});window.addEventListener("resize",draw);
+    async function play(){try{await renderer.play();stationState.autoAdvance=true;stationState.endedHandled=false;setStatus("Playing · next score buffering");void ensureNextBuffered(stationState.session);}catch(error){setStatus(error.message);}}
+    function tick(){const duration=renderer.duration||0,position=renderer.position;$("position").textContent=fmt(position);$("progress").style.width=(duration?clamp(position/duration*100,0,100):0)+"%";if(renderer.state==="playing"&&duration&&duration-position<=Math.min(12,Math.max(4,duration*.25))&&stationState.queuedCount<1)void ensureNextBuffered(stationState.session);if(renderer.state==="ended"&&stationState.autoAdvance&&!stationState.endedHandled){stationState.endedHandled=true;void advanceAfterEnd(stationState.session);}draw();requestAnimationFrame(tick);}requestAnimationFrame(tick);
+    $("connect").addEventListener("click",connect);$("next").addEventListener("click",bufferNext);$("play").addEventListener("click",play);$("pause").addEventListener("click",()=>{renderer.pause();setStatus("Paused");});$("stop").addEventListener("click",()=>{renderer.stop();stationState.autoAdvance=false;stationState.endedHandled=false;setStatus("Stopped");});window.addEventListener("resize",draw);
   </script>
 </body>
 </html>`,
