@@ -223,10 +223,12 @@ test("composeChannelScore retries the real composer a bounded number of times be
 
 test("composeChannelScore succeeds via retry as soon as a candidate passes the quality gate", async () => {
   let calls = 0;
+  const requests = [];
   const env = {
     AI: {
-      run: async () => {
+      run: async (_model, request) => {
         calls += 1;
+        requests.push(request);
         const text = calls === 1
           ? sparseRawScoreJson({ compositionId: "attempt-1-sparse" })
           : validRawScoreJson({ compositionId: "attempt-2-good" });
@@ -241,6 +243,13 @@ test("composeChannelScore succeeds via retry as soon as a candidate passes the q
   assert.equal(result.fellBack, false);
   assert.equal(result.source, "workers-ai");
   assert.equal(result.score.compositionId, "attempt-2-good");
+  assert.match(requests[0].messages[0].content, /4 bars spans beats 0-16/);
+  assert.match(requests[0].messages[0].content, /Never declare more bars than the events actually occupy/);
+  const firstUserPrompt = JSON.parse(requests[0].messages[1].content);
+  const secondUserPrompt = JSON.parse(requests[1].messages[1].content);
+  assert.equal(firstUserPrompt.retryFeedback, null);
+  assert.match(secondUserPrompt.retryFeedback, /insufficient_temporal_coverage/);
+  assert.match(secondUserPrompt.retryFeedback, /middle and final bars/);
 });
 
 test("composeChannelScore never exceeds MAX_COMPOSER_ATTEMPTS even when explicitly asked for more", async () => {
