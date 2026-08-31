@@ -79,7 +79,12 @@ assert.ok(persistentDemoBuffer.data.composition_buffer_count >= 1);
 assert.ok(persistentDemoBuffer.data.buffered_composition_id);
 
 const player = await call("/");
-assert.match(player.data.raw, /data-step="v0\.4-step-2"/);
+assert.match(player.data.raw, /data-step="v0\.4-step-3"/);
+assert.match(player.data.raw, /id="score-attribution"/);
+assert.match(player.data.raw, /function renderAttribution\(score\)/);
+assert.match(player.data.raw, /class="queue-preview"/);
+assert.match(player.data.raw, /function renderQueuePreview\(score\)/);
+assert.match(player.data.raw, /Deterministic fixture fallback/);
 assert.match(player.data.raw, /class ScoreRenderer/);
 assert.match(player.data.raw, /infinite-radio-score-v1/);
 assert.match(player.data.raw, /const canonicalState=/);
