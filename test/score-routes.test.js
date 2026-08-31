@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ChannelConductor } from "../src/index.js";
+import worker, { ChannelConductor } from "../src/index.js";
 import { SCORE_SCHEMA_VERSION } from "../src/score-schema.js";
 
 class MemoryStorage {
@@ -137,4 +137,28 @@ test("/score/next is channel-scoped: a second channel gets its own independent q
   const alphaState = await (await conductorAlpha.fetch(channelRequest("/state", { channelId: "alpha", creatorId: "creator-a" }))).json();
   assert.equal(alphaState.state.compositionQueue.length, 1);
   assert.equal(alphaState.state.compositionQueue[0].channelId, "alpha");
+});
+
+test("root serves the V0.3.1 read/play workspace shell with an isolated allowlisted WebAudio renderer", async () => {
+  const response = await worker.fetch(new Request("https://infinite-radio.test/"), {});
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  const html = await response.text();
+
+  assert.match(html, /data-step="v0\.3\.1-step-5"/);
+  assert.match(html, /class ScoreRenderer/);
+  assert.match(html, /infinite-radio-score-v1/);
+  assert.match(html, /const canonicalState=/);
+  assert.match(html, /const viewState=/);
+  assert.match(html, /Generate next/);
+  assert.doesNotMatch(html, /\beval\s*\(/);
+  assert.doesNotMatch(html, /new Function\s*\(/);
+  assert.doesNotMatch(html, /AudioWorklet/);
+});
+
+test("health advertises the structured-composition browser-synth runtime", async () => {
+  const response = await worker.fetch(new Request("https://infinite-radio.test/health"), {});
+  const payload = await response.json();
+  assert.equal(payload.version, "0.3.1");
+  assert.equal(payload.runtime, "structured-composition-browser-synth");
 });
