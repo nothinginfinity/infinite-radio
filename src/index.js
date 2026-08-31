@@ -21,6 +21,7 @@ import {
   selectNextPrompt,
   submitPrompt,
   updateChannelPolicy,
+  upgradePersistedChannelState,
 } from "./station-state.js";
 import { buildComposerContext, composeChannelScore } from "./composer.js";
 
@@ -265,7 +266,18 @@ export class ChannelConductor {
       if (persisted.channelId !== channelId) {
         throw new Error("channel_scope_violation");
       }
-      return persisted;
+      const upgraded = upgradePersistedChannelState(persisted);
+      const needsUpgrade = persisted.schemaVersion !== upgraded.schemaVersion
+        || !Array.isArray(persisted.compositionQueue)
+        || !Object.prototype.hasOwnProperty.call(persisted, "currentComposition")
+        || !Object.prototype.hasOwnProperty.call(persisted, "currentCompositionStartedAt")
+        || !Object.prototype.hasOwnProperty.call(persisted, "lastCompositionId")
+        || !Object.prototype.hasOwnProperty.call(persisted, "lastTransitionHint")
+        || !persisted.counters
+        || !Number.isFinite(persisted.counters.compositionsQueued)
+        || !Number.isFinite(persisted.counters.compositionFallbacks);
+      if (needsUpgrade) await this.ctx.storage.put("channel-state", upgraded);
+      return upgraded;
     }
     if (!creatorId) throw new Error("creator_id_required");
     const state = createChannelState({ channelId, creatorId });
