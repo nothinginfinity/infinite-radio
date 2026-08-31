@@ -33,13 +33,23 @@ async function call(path, { method = "GET", creatorId, providerKey, body, expect
 
 const health = await call("/health");
 assert.equal(health.data.ok, true);
-assert.equal(health.data.version, "0.3.0");
-assert.equal(health.data.runtime, "channel-first-byok");
+assert.equal(health.data.version, "0.3.1");
+assert.equal(health.data.runtime, "structured-composition-browser-synth");
 assert.equal(health.data.bindings.channelConductor, true);
 assert.equal(health.data.bindings.d1, true);
 assert.equal(health.data.bindings.r2, true);
 assert.equal(health.data.bindings.workersAI, true);
 assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai", "fal-stable-audio"]);
+
+const player = await call("/");
+assert.match(player.data.raw, /data-step="v0\.3\.1-step-5"/);
+assert.match(player.data.raw, /class ScoreRenderer/);
+assert.match(player.data.raw, /infinite-radio-score-v1/);
+assert.match(player.data.raw, /const canonicalState=/);
+assert.match(player.data.raw, /const viewState=/);
+assert.doesNotMatch(player.data.raw, /\beval\s*\(/);
+assert.doesNotMatch(player.data.raw, /new Function\s*\(/);
+assert.doesNotMatch(player.data.raw, /AudioWorklet/);
 
 for (const [channelId, creatorId] of [
   [channelA, creatorA],
@@ -63,6 +73,26 @@ for (const [channelId, creatorId] of [
   assert.equal(init.data.state.policy.provider, "fixture");
   assert.equal(init.data.state.policy.credentialRef, null);
 }
+
+const composed = await call(`/api/channels/${channelA}/score/next`, {
+  method: "POST",
+  creatorId: creatorA,
+  expected: [201],
+  body: { listenerIntent: { surface: "live-acceptance-step5" } },
+});
+assert.equal(composed.data.ok, true);
+assert.equal(composed.data.score.schemaVersion, "infinite-radio-score-v1");
+assert.equal(composed.data.score.channelId, channelA);
+assert.ok(["workers-ai", "fixture"].includes(composed.data.source));
+assert.equal(composed.data.composition_buffer_count, 1);
+
+const selectedScore = await call(`/api/channels/${channelA}/score/select`, {
+  method: "POST",
+  creatorId: creatorA,
+});
+assert.equal(selectedScore.data.ok, true);
+assert.equal(selectedScore.data.score.compositionId, composed.data.score.compositionId);
+assert.equal(selectedScore.data.composition_buffer_count, 0);
 
 const acceptanceProviderKey = `acceptance-key-${runId}`;
 const providerConfigured = await call(`/api/channels/${channelA}/provider`, {
@@ -224,4 +254,6 @@ console.log(JSON.stringify({
     counters: stateB.data.state.counters,
   },
   briefSource: brief.data.source,
+  scoreSource: composed.data.source,
+  scoreCompositionId: composed.data.score.compositionId,
 }, null, 2));
