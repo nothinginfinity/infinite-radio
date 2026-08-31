@@ -88,6 +88,7 @@ export function createChannelState(overrides = {}) {
     archive: clone(overrides.archive ?? []),
     compositionQueue: clone(overrides.compositionQueue ?? []),
     currentComposition: clone(overrides.currentComposition ?? null),
+    currentCompositionStartedAt: overrides.currentCompositionStartedAt ?? null,
     lastCompositionId: overrides.lastCompositionId ?? null,
     lastTransitionHint: overrides.lastTransitionHint ?? null,
     policy: normalizePolicy(policy, {
@@ -306,7 +307,7 @@ export function queueComposition(state, score) {
  * This is the continuity boundary: motif/energy/transition memory advances on
  * selection, never merely because a future candidate was prebuffered.
  */
-export function selectNextComposition(state) {
+export function selectNextComposition(state, options = {}) {
   if (state.compositionQueue.length === 0) {
     return { selected: null, state };
   }
@@ -315,12 +316,14 @@ export function selectNextComposition(state) {
   const mergedMotifs = [...new Set([...(state.bible.recurringMotifs ?? []), ...incomingMotifs])].slice(-16);
   const nextEnergy = Number.isFinite(selected.continuity?.energy) ? selected.continuity.energy : state.bible.energy;
   const nextTransitionHint = selected.continuity?.transitionHint ?? state.lastTransitionHint ?? null;
+  const selectedAt = new Date(options.now ?? Date.now()).toISOString();
   return {
     selected,
     state: {
       ...state,
       compositionQueue: rest,
       currentComposition: selected,
+      currentCompositionStartedAt: selectedAt,
       lastCompositionId: selected.compositionId,
       lastTransitionHint: nextTransitionHint,
       bible: {
@@ -334,6 +337,34 @@ export function selectNextComposition(state) {
 
 export function compositionBufferCount(state) {
   return state.compositionQueue.length;
+}
+
+export function currentCompositionPlayback(state, now = Date.now()) {
+  const score = state.currentComposition ?? null;
+  if (!score) {
+    return {
+      compositionId: null,
+      startedAt: null,
+      positionSeconds: 0,
+      durationSeconds: 0,
+      ended: false,
+    };
+  }
+  const durationSeconds = Math.max(0, Number(score.durationSeconds) || 0);
+  const startedAt = state.currentCompositionStartedAt ?? null;
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Number.NaN;
+  const nowMs = new Date(now).getTime();
+  const elapsedSeconds = Number.isFinite(startedMs) && Number.isFinite(nowMs)
+    ? Math.max(0, (nowMs - startedMs) / 1000)
+    : 0;
+  const positionSeconds = Math.min(durationSeconds, elapsedSeconds);
+  return {
+    compositionId: score.compositionId ?? null,
+    startedAt,
+    positionSeconds,
+    durationSeconds,
+    ended: durationSeconds > 0 && positionSeconds >= Math.max(0, durationSeconds - 0.02),
+  };
 }
 
 export function readyBufferSeconds(state) {
