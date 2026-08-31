@@ -92,6 +92,12 @@ assert.match(player.data.raw, /this\.master\.context!==this\.ctx/);
 assert.match(player.data.raw, /crossfadeEpoch/);
 assert.match(player.data.raw, /crossfadeAttemptedCompositionId/);
 assert.match(player.data.raw, /function settleCrossfade/);
+assert.match(player.data.raw, /seek\(seconds\)/);
+assert.match(player.data.raw, /\/playback\/rejoin/);
+assert.match(player.data.raw, /applyPlaybackSnapshot/);
+assert.match(player.data.raw, /rejoinLiveState/);
+assert.match(player.data.raw, /position synced/);
+assert.match(player.data.raw, /params\.has\("channel"\)&&params\.has\("creator"\)/);
 assert.match(player.data.raw, /const livePlayback=!viewState\.replaying/);
 assert.match(player.data.raw, /stationState\.autoAdvance=livePlayback/);
 assert.match(player.data.raw, /Playing library replay · live continuity unchanged/);
@@ -157,6 +163,23 @@ assert.equal(selectedScore.data.score.compositionId, composed.data.score.composi
 assert.equal(selectedScore.data.composition_buffer_count, 0);
 assert.equal(selectedScore.data.state.currentComposition.compositionId, composed.data.score.compositionId);
 assert.equal(selectedScore.data.state.lastCompositionId, composed.data.score.compositionId);
+assert.equal(selectedScore.data.playback.composition_id, composed.data.score.compositionId);
+assert.ok(selectedScore.data.playback.started_at);
+assert.ok(selectedScore.data.playback.position_seconds >= 0);
+assert.equal(selectedScore.data.playback.ended, false);
+
+const rejoinedCurrent = await call(`/api/channels/${channelA}/playback/rejoin`, {
+  method: "POST",
+  creatorId: creatorA,
+  body: {},
+});
+assert.equal(rejoinedCurrent.data.ok, true);
+assert.equal(rejoinedCurrent.data.advanced, false);
+assert.equal(rejoinedCurrent.data.state.currentComposition.compositionId, composed.data.score.compositionId);
+assert.equal(rejoinedCurrent.data.playback.composition_id, composed.data.score.compositionId);
+assert.equal(rejoinedCurrent.data.playback.started_at, selectedScore.data.playback.started_at);
+assert.ok(rejoinedCurrent.data.playback.position_seconds >= selectedScore.data.playback.position_seconds);
+assert.equal(rejoinedCurrent.data.playback.ended, false);
 const currentCompositionIdBeforeSteering = selectedScore.data.state.currentComposition.compositionId;
 
 const prebuffered = await call(`/api/channels/${channelA}/score/prebuffer`, {
