@@ -55,7 +55,7 @@ assert.equal(health.data.bindings.workersAI, true);
 assert.deepEqual(health.data.musicProviders, ["fixture", "fal-cassetteai", "fal-stable-audio"]);
 
 const player = await call("/");
-assert.match(player.data.raw, /data-step="v0\.3\.1-step-6"/);
+assert.match(player.data.raw, /data-step="v0\.4-step-1"/);
 assert.match(player.data.raw, /class ScoreRenderer/);
 assert.match(player.data.raw, /infinite-radio-score-v1/);
 assert.match(player.data.raw, /const canonicalState=/);
@@ -64,6 +64,14 @@ assert.match(player.data.raw, /const stationState=/);
 assert.match(player.data.raw, /\/score\/prebuffer/);
 assert.match(player.data.raw, /ensureNextBuffered/);
 assert.match(player.data.raw, /advanceAfterEnd/);
+assert.match(player.data.raw, /currentComposition/);
+assert.match(player.data.raw, /drawVisualProjection/);
+assert.match(player.data.raw, /scoreMetrics/);
+assert.match(player.data.raw, /steeringPrompt/);
+assert.match(player.data.raw, /Steer next/);
+assert.match(player.data.raw, /replace:true/);
+assert.doesNotMatch(player.data.raw, /EditCommand/);
+assert.doesNotMatch(player.data.raw, /ScoreReducer/);
 assert.doesNotMatch(player.data.raw, /\beval\s*\(/);
 assert.doesNotMatch(player.data.raw, /new Function\s*\(/);
 assert.doesNotMatch(player.data.raw, /AudioWorklet/);
@@ -111,6 +119,9 @@ const selectedScore = await call(`/api/channels/${channelA}/score/select`, {
 assert.equal(selectedScore.data.ok, true);
 assert.equal(selectedScore.data.score.compositionId, composed.data.score.compositionId);
 assert.equal(selectedScore.data.composition_buffer_count, 0);
+assert.equal(selectedScore.data.state.currentComposition.compositionId, composed.data.score.compositionId);
+assert.equal(selectedScore.data.state.lastCompositionId, composed.data.score.compositionId);
+const currentCompositionIdBeforeSteering = selectedScore.data.state.currentComposition.compositionId;
 
 const prebuffered = await call(`/api/channels/${channelA}/score/prebuffer`, {
   method: "POST",
@@ -134,6 +145,32 @@ assert.equal(prebufferReplay.data.ok, true);
 assert.equal(prebufferReplay.data.created, false);
 assert.equal(prebufferReplay.data.composition_buffer_count, 1);
 assert.equal(prebufferReplay.data.buffered_composition_id, prebuffered.data.buffered_composition_id);
+
+const steeredFuture = await call(`/api/channels/${channelA}/score/prebuffer`, {
+  method: "POST",
+  creatorId: creatorA,
+  expected: [201],
+  body: {
+    replace: true,
+    listenerIntent: {
+      surface: "v04-visual-steering-live-acceptance",
+      text: "Listener steering for the NEXT composition only. Energy intense. Brightness bright. Density balanced. Space spacious. Harmonic tension colorful. Preserve channel identity.",
+    },
+  },
+});
+assert.equal(steeredFuture.data.ok, true);
+assert.equal(steeredFuture.data.created, true);
+assert.equal(steeredFuture.data.replaced, true);
+assert.equal(steeredFuture.data.previous_buffered_composition_id, prebuffered.data.buffered_composition_id);
+assert.notEqual(steeredFuture.data.buffered_composition_id, prebuffered.data.buffered_composition_id);
+assert.equal(steeredFuture.data.composition_buffer_count, 1);
+assert.equal(steeredFuture.data.state.currentComposition.compositionId, currentCompositionIdBeforeSteering);
+assert.equal(steeredFuture.data.state.lastCompositionId, currentCompositionIdBeforeSteering);
+const stateAfterSteering = await call(`/api/channels/${channelA}/state`, { creatorId: creatorA });
+assert.equal(stateAfterSteering.data.state.currentComposition.compositionId, currentCompositionIdBeforeSteering);
+assert.equal(stateAfterSteering.data.state.lastCompositionId, currentCompositionIdBeforeSteering);
+assert.equal(stateAfterSteering.data.state.compositionQueue.length, 1);
+assert.equal(stateAfterSteering.data.state.compositionQueue[0].compositionId, steeredFuture.data.buffered_composition_id);
 
 const modelAttempts = [];
 let realModelComposition = null;
@@ -353,6 +390,8 @@ console.log(JSON.stringify({
   scoreSource: composed.data.source,
   scoreCompositionId: composed.data.score.compositionId,
   prebufferedCompositionId: prebuffered.data.buffered_composition_id,
+  steeredBufferedCompositionId: steeredFuture.data.buffered_composition_id,
+  currentCompositionIdAfterSteering: stateAfterSteering.data.state.currentComposition.compositionId,
   realWorkersAiCompositionId: realCompositionId,
   realWorkersAiAttempts: modelAttempts,
 }, null, 2));
