@@ -36,6 +36,7 @@ jobs:
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "CHANNEL=$CHANNEL" >> "$GITHUB_ENV"
           echo "CREATOR=$CREATOR" >> "$GITHUB_ENV"
+          export TOKEN CHANNEL CREATOR
           node scripts/v03-real-fal-acceptance-patch.mjs
           node --check src/index.js
 
