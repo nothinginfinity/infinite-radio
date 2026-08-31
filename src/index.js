@@ -8,16 +8,20 @@ import {
   chooseNextPlayable,
   compileStationBrief,
   completeMusicGeneration,
+  compositionBufferCount,
   createChannelState,
   createGenerationJob,
   ensureFixtureBuffer,
   failGeneration,
   markGenerationRunning,
+  queueComposition,
   readyBufferSeconds,
+  selectNextComposition,
   selectNextPrompt,
   submitPrompt,
   updateChannelPolicy,
 } from "./station-state.js";
+import { buildComposerContext, composeChannelScore } from "./composer.js";
 
 function json(data, init = {}) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -58,6 +62,8 @@ function errorResponse(error) {
     "fixture_provider_required",
     "prompt_queue_empty",
     "invalid_generated_audio",
+    "valid_composition_required",
+    "composition_queue_empty",
   ]);
   return json(
     { ok: false, error: error?.message ?? "internal_error" },
@@ -658,6 +664,40 @@ export class ChannelConductor {
         });
       }
 
+      if (request.method === "POST" && url.pathname === "/score/next") {
+        const body = (await readJson(request)) ?? {};
+        const context = buildComposerContext(state, body.listenerIntent ?? {});
+        const result = await composeChannelScore(this.env, { channelId: state.channelId, creatorId: state.creatorId }, context, {
+          model: body.model,
+        });
+        const queued = queueComposition(state, result.score);
+        await this.persist(queued);
+        return json(
+          {
+            ok: true,
+            source: result.source,
+            fell_back: result.fellBack,
+            fallback_reason: result.fallbackReason,
+            score: result.score,
+            composition_buffer_count: compositionBufferCount(queued),
+            state: publicState(queued),
+          },
+          { status: 201 },
+        );
+      }
+
+      if (request.method === "POST" && url.pathname === "/score/select") {
+        const selection = selectNextComposition(state);
+        if (!selection.selected) throw new Error("composition_queue_empty");
+        await this.persist(selection.state);
+        return json({
+          ok: true,
+          score: selection.selected,
+          composition_buffer_count: compositionBufferCount(selection.state),
+          state: publicState(selection.state),
+        });
+      }
+
       if (request.method === "POST" && url.pathname === "/brief") {
         const body = (await readJson(request)) ?? {};
         const compiled = await compileControlBrief(this.env.AI, state, body.prompt ?? null);
@@ -684,6 +724,9 @@ function publicState(state) {
     status: state.status,
     currentTrack: state.currentTrack,
     readyQueue: state.readyQueue,
+    compositionQueue: state.compositionQueue,
+    lastCompositionId: state.lastCompositionId,
+    lastTransitionHint: state.lastTransitionHint,
     promptQueue: state.promptQueue,
     generationJobs: state.generationJobs,
     generationWindow: state.generationWindow,
@@ -753,6 +796,8 @@ POST /api/channels/:channel_id/provider
 POST /api/channels/:channel_id/generation/next
 POST /api/channels/:channel_id/conductor/tick
 POST /api/channels/:channel_id/playback/next
+POST /api/channels/:channel_id/score/next
+POST /api/channels/:channel_id/score/select
 GET  /api/channels/:channel_id/ws</pre>
   <p>Mutation and state endpoints require an <code>x-creator-id</code> header matching the channel owner.</p>
 </body></html>`,
