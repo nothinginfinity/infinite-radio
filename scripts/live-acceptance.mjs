@@ -15,8 +15,10 @@ const baseUrl = process.env.LIVE_URL ?? "https://infinite-radio.jaredtechfit.wor
 const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
 const channelA = `accept-a-${runId}`;
 const channelB = `accept-b-${runId}`;
+const channelModel = `accept-model-${runId}`;
 const creatorA = `creator-a-${runId}`;
 const creatorB = `creator-b-${runId}`;
+const creatorModel = `creator-model-${runId}`;
 
 async function call(path, { method = "GET", creatorId, providerKey, body, expected = [200] } = {}) {
   const headers = {};
@@ -69,6 +71,7 @@ assert.doesNotMatch(player.data.raw, /AudioWorklet/);
 for (const [channelId, creatorId] of [
   [channelA, creatorA],
   [channelB, creatorB],
+  [channelModel, creatorModel],
 ]) {
   const init = await call(`/api/channels/${channelId}/init`, {
     method: "POST",
@@ -131,6 +134,61 @@ assert.equal(prebufferReplay.data.ok, true);
 assert.equal(prebufferReplay.data.created, false);
 assert.equal(prebufferReplay.data.composition_buffer_count, 1);
 assert.equal(prebufferReplay.data.buffered_composition_id, prebuffered.data.buffered_composition_id);
+
+const modelAttempts = [];
+let realModelComposition = null;
+for (let attempt = 1; attempt <= 6 && !realModelComposition; attempt += 1) {
+  const candidate = await call(`/api/channels/${channelModel}/score/next`, {
+    method: "POST",
+    creatorId: creatorModel,
+    expected: [201],
+    body: {
+      listenerIntent: {
+        surface: "live-acceptance-step7-real-model",
+        text: `Original acceptance composition ${attempt}: luminous synthetic pulse, coherent motif, clean transition.`,
+      },
+    },
+  });
+  assert.equal(candidate.data.ok, true);
+  assert.equal(candidate.data.score.schemaVersion, "infinite-radio-score-v1");
+  assert.equal(candidate.data.score.channelId, channelModel);
+  modelAttempts.push({
+    attempt,
+    source: candidate.data.source,
+    fellBack: candidate.data.fell_back,
+    fallbackReason: candidate.data.fallback_reason,
+    compositionId: candidate.data.score.compositionId,
+  });
+  if (candidate.data.source === "workers-ai") realModelComposition = candidate;
+}
+assert.ok(realModelComposition, `real Workers AI composition unavailable after bounded retries: ${JSON.stringify(modelAttempts)}`);
+assert.equal(realModelComposition.data.fell_back, false);
+assert.equal(realModelComposition.data.score.provenance.composer, "workers-ai");
+assert.equal(realModelComposition.data.score.provenance.model, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+
+const modelState = await call(`/api/channels/${channelModel}/state`, { creatorId: creatorModel });
+const realCompositionId = realModelComposition.data.score.compositionId;
+assert.ok(modelState.data.state.compositionQueue.some((score) => score.compositionId === realCompositionId));
+assert.equal(modelState.data.state.channelId, channelModel);
+assert.equal(modelState.data.state.creatorId, creatorModel);
+
+const untouchedModelIsolationState = await call(`/api/channels/${channelB}/state`, { creatorId: creatorB });
+assert.equal(untouchedModelIsolationState.data.state.compositionQueue.length, 0);
+assert.equal(JSON.stringify(untouchedModelIsolationState.data.state).includes(realCompositionId), false);
+
+let selectedRealComposition = null;
+for (let index = 0; index < modelState.data.state.compositionQueue.length; index += 1) {
+  const selection = await call(`/api/channels/${channelModel}/score/select`, {
+    method: "POST",
+    creatorId: creatorModel,
+  });
+  if (selection.data.score.compositionId === realCompositionId) {
+    selectedRealComposition = selection.data.score;
+    break;
+  }
+}
+assert.ok(selectedRealComposition, "real Workers AI composition was persisted but could not be selected by the player API");
+assert.equal(selectedRealComposition.provenance.composer, "workers-ai");
 
 const acceptanceProviderKey = `acceptance-key-${runId}`;
 const providerConfigured = await call(`/api/channels/${channelA}/provider`, {
@@ -295,4 +353,6 @@ console.log(JSON.stringify({
   scoreSource: composed.data.source,
   scoreCompositionId: composed.data.score.compositionId,
   prebufferedCompositionId: prebuffered.data.buffered_composition_id,
+  realWorkersAiCompositionId: realCompositionId,
+  realWorkersAiAttempts: modelAttempts,
 }, null, 2));
