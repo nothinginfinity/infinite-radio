@@ -213,6 +213,72 @@ test("/score/select pops the queued composition FIFO and empties correctly", asy
   assert.equal(emptyPayload.error, "composition_queue_empty");
 });
 
+test("/playback/rejoin advances an expired canonical score exactly once and returns the new live position", async () => {
+  const storage = new MemoryStorage();
+  const env = fakeAiEnv();
+  const originalRun = env.AI.run;
+  let calls = 0;
+  env.AI.run = async (...args) => {
+    calls += 1;
+    const result = await originalRun(...args);
+    const score = JSON.parse(result.response);
+    score.compositionId = `rejoin-comp-${calls}`;
+    return { response: JSON.stringify(score) };
+  };
+  const conductor = new ChannelConductor(makeCtx(storage), env);
+  await initChannel(conductor);
+
+  await conductor.fetch(channelRequest("/score/next", { method: "POST", body: {} }));
+  const firstSelection = await conductor.fetch(channelRequest("/score/select", { method: "POST" }));
+  const first = await firstSelection.json();
+  assert.equal(first.score.compositionId, "rejoin-comp-1");
+  assert.ok(first.playback.started_at);
+
+  await conductor.fetch(channelRequest("/score/prebuffer", { method: "POST", body: {} }));
+  const persisted = await storage.get("channel-state");
+  persisted.currentCompositionStartedAt = new Date(
+    Date.now() - (persisted.currentComposition.durationSeconds + 2) * 1000,
+  ).toISOString();
+  await storage.put("channel-state", persisted);
+
+  const rejoinResponse = await conductor.fetch(channelRequest("/playback/rejoin", { method: "POST", body: {} }));
+  assert.equal(rejoinResponse.status, 200);
+  const rejoined = await rejoinResponse.json();
+  assert.equal(rejoined.ok, true);
+  assert.equal(rejoined.advanced, true);
+  assert.equal(rejoined.state.currentComposition.compositionId, "rejoin-comp-2");
+  assert.equal(rejoined.state.compositionQueue.length, 0);
+  assert.equal(rejoined.playback.composition_id, "rejoin-comp-2");
+  assert.ok(rejoined.playback.position_seconds >= 0);
+  assert.ok(rejoined.playback.position_seconds < 1);
+  assert.equal(rejoined.playback.ended, false);
+
+  const replayResponse = await conductor.fetch(channelRequest("/playback/rejoin", { method: "POST", body: {} }));
+  const replay = await replayResponse.json();
+  assert.equal(replay.advanced, false);
+  assert.equal(replay.state.currentComposition.compositionId, "rejoin-comp-2");
+});
+
+test("/playback/rejoin repairs legacy current state that predates the authoritative start clock", async () => {
+  const storage = new MemoryStorage();
+  const conductor = new ChannelConductor(makeCtx(storage), fakeAiEnv());
+  await initChannel(conductor);
+  await conductor.fetch(channelRequest("/score/next", { method: "POST", body: {} }));
+  await conductor.fetch(channelRequest("/score/select", { method: "POST" }));
+  const legacy = await storage.get("channel-state");
+  delete legacy.currentCompositionStartedAt;
+  await storage.put("channel-state", legacy);
+
+  const response = await conductor.fetch(channelRequest("/playback/rejoin", { method: "POST", body: {} }));
+  const payload = await response.json();
+  assert.equal(payload.advanced, false);
+  assert.equal(payload.state.currentComposition.compositionId, "ai-comp-1");
+  assert.ok(payload.playback.started_at);
+  assert.ok(payload.playback.position_seconds < 1);
+  const repaired = await storage.get("channel-state");
+  assert.equal(repaired.currentCompositionStartedAt, payload.playback.started_at);
+});
+
 test("/score/next is channel-scoped: a second channel gets its own independent queue", async () => {
   const conductorAlpha = new ChannelConductor(makeCtx(new MemoryStorage()), fakeAiEnv());
   const conductorBeta = new ChannelConductor(makeCtx(new MemoryStorage()), fakeAiEnv());
@@ -272,6 +338,12 @@ test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity an
   assert.match(html, /crossfadeEpoch/);
   assert.match(html, /crossfadeAttemptedCompositionId/);
   assert.match(html, /function settleCrossfade/);
+  assert.match(html, /seek\(seconds\)/);
+  assert.match(html, /\/playback\/rejoin/);
+  assert.match(html, /applyPlaybackSnapshot/);
+  assert.match(html, /rejoinLiveState/);
+  assert.match(html, /position synced/);
+  assert.match(html, /params\.has\("channel"\)&&params\.has\("creator"\)/);
   assert.match(html, /const livePlayback=!viewState\.replaying/);
   assert.match(html, /stationState\.autoAdvance=livePlayback/);
   assert.match(html, /Playing library replay · live continuity unchanged/);
