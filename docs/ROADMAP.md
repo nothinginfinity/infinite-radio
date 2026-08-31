@@ -110,9 +110,11 @@ channel musical DNA + listener intent
 
 ### Implementation checkpoint — 2026-08-30
 - `src/score-schema.js` defines the score schema constants, validator/normalizer choke point, hard safety bounds, trusted identity override, and deterministic fixture composer
-- `test/score-schema.test.js` covers valid output and rejection boundaries
-- checkpoint `1e4229e7f5fb29eeee587fd1600078ea87cfbec2` passed CI `33354280978` and Cloudflare deploy `33354280998`
-- remaining active work: Workers AI composer adapter, conductor composition queue/continuity, score persistence/retrieval, browser renderer, prebuffer/scheduling, and live end-to-end acceptance
+- Workers AI composition is live through the provider-neutral composer adapter; untrusted model text is JSON-parsed only, then validated/normalized, with deterministic fallback on any failure
+- Channel Conductor now owns a persisted composition queue plus continuity state and exposes `POST /score/next`, `POST /score/select`, and retrievable public score state
+- checkpoint `a144ca5bf0b7a3b06141fad38a99768e29f228f2` live-proved real Workers AI composition -> validated persisted score, while invalid generations fail closed to fixture without silencing the channel
+- current Step 5 is the minimal browser workspace shell + native Web Audio renderer consuming validated `infinite-radio-score-v1`; the shell must be forward-compatible with later multi-view editing but must not pull Web DAW mutation features into V0.3.1
+- remaining active work after Step 5: composition prebuffer/scheduling, then live browser end-to-end acceptance
 
 ### Acceptance
 - a real Workers AI call creates an original score from channel state + listener intent
@@ -128,17 +130,26 @@ channel musical DNA + listener intent
 
 ## V0.4 — Infinite Station / seamless listener experience — PLANNED
 
-Goal: make structured compositions feel like a continuous living station rather than isolated generated clips.
+Goal: make structured compositions feel like a continuous living station while establishing the reusable interaction shell that later becomes the Chat DAW.
+
+### UX contract
+- **one score, many projections:** the browser consumes one validated canonical score; Player, Visual, Arrange, Piano, Mix, Flow, and Chat are views over that musical state rather than independent music engines
+- V0.4 remains listener-first: playback and station steering ship before full score editing
+- playback runtime state, view/UI state, and any future local draft score remain separate so UI gestures cannot silently mutate canonical server state
+- mobile is first-class; the default phone experience is a full-height active canvas with persistent transport and lightweight mode navigation, while chat opens as a sheet rather than permanently consuming half the screen
 
 ### Deliverables
-- mobile-first listener/player surface
+- forward-compatible browser workspace shell established by the V0.3.1 Step 5 player
+- mobile-first listener/player surface and desktop responsive layout
+- native Web Audio score renderer isolated from view components
 - composition prebuffering and gap-resistant scheduling
 - transitions/crossfades between score performances
 - reconnect and current-position behavior
-- now-playing composition/prompt/creator attribution
+- now-playing composition/prompt/creator/provenance attribution
 - queue preview and listener steering hooks
-- waveform/visualizer or score-aware visualization
-- archive/fixture fallback UX
+- first **Visual** projection for non-musicians: mood/energy surface, tempo/energy controls, and score-aware visualization using deterministic mappings
+- harmonic visualization based on real musical relationships (for example circle-of-fifths/key proximity); color palettes are presentation themes, not a claim that one note has one objectively correct color
+- archive/fixture fallback UX and visible source/fallback state where useful
 - longer-running station soak behavior
 
 ### Acceptance
@@ -146,28 +157,60 @@ Goal: make structured compositions feel like a continuous living station rather 
 - listener reload can rejoin authoritative channel state
 - next composition is prepared before the current composition ends
 - Workers AI/provider failure does not silence a public station
+- renderer can consume a validated score independently of whichever visual projection is active
+- switching views/presentation state cannot alter the canonical score
 
 ---
 
-## V0.5 — Web Music Workstation — PLANNED
+## V0.5 — Chat DAW / Web Music Workstation — PLANNED
 
-Goal: turn the structured-score player into an editable browser-native music workstation.
+Goal: turn the structured-score player into an editable browser-native workstation whose interface scales from non-musician semantic controls to precise producer editing without changing the underlying musical object.
+
+### Interaction architecture
+
+```text
+canonical revision
+      -> local draft
+      -> UI EditCommand(s)
+      -> ScoreReducer / deterministic transformation
+      -> validate + normalize
+      -> local Web Audio preview
+      -> Save Version (later immutable revision boundary)
+```
+
+Manual UI edits and later AI-produced score patches must converge on the same controlled mutation path. No view writes arbitrary raw JSON directly, and incomplete streamed model output is never applied incrementally to a live score.
+
+### Workspace projections
+- **Visual** — mood/energy surface, semantic timbre macros, harmonic/key visualization, non-musician controls
+- **Arrange** — song sections, track lanes, patterns, structure, section energy
+- **Piano** — notes, timing, duration, velocity, drums, precise musical selection
+- **Mix** — track gain/pan, allowlisted synth patches, bounded effects and effect amounts
+- **Flow** — constrained visualization/editing of allowlisted patch/effect signal flow; no arbitrary WebAudio graph, generated JavaScript, unrestricted AudioNode wiring, or arbitrary DSP
+- **Chat** — co-producer surface attached to selection/current draft; V0.5 may expose context and commands, while actual model-authored targeted score patches belong to V0.6
 
 ### Deliverables
+- shared score/view store with renderer state isolated from editor/view state
 - score inspector and arrangement/timeline view
 - piano-roll or equivalent note editor
 - track mixer controls
 - allowlisted synth/patch selection
 - tempo/key/section controls
 - direct note/chord/drum editing
+- semantic macro controls that deterministically map concepts such as brighter/darker, calmer/more energetic, sparse/dense, or dry/spacious onto validated score fields
 - bounded automation/effect editing
-- undo/redo and non-destructive revision preview
+- local draft, undo/redo, selection, and non-destructive A/B preview
+- EditCommand + deterministic score transformation boundary
+- every candidate draft must re-enter canonical validation before preview/save
 - import/export of the canonical score without raw credentials
+- mobile interaction model that prioritizes Visual/Arrange/Chat and allows precision editors to expand fullscreen/landscape
 
 ### Acceptance
-- creator can modify a persisted score without running another model inference
-- one-note, one-chord, one-track, and tempo edits are audible immediately in local playback
-- workstation cannot create a score that bypasses canonical validation
+- creator can modify a persisted score locally without running another model inference
+- the same score remains semantically synchronized across Visual, Arrange, Piano, and Mix projections
+- one-note, one-chord, one-track, tempo, and semantic-macro edits are audible immediately in local playback
+- undo/redo remains local and does not create one persistent revision per pointer movement
+- workstation cannot create or save a score that bypasses canonical validation
+- Flow cannot express a signal graph outside the allowlisted score/synth contract
 
 ---
 
