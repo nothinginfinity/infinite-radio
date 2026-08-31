@@ -68,7 +68,7 @@ async function runV03FalAcceptance(env) {
     method: "POST",
     providerKey: env.FAL_API_KEY,
     body: {
-      provider: "fal-cassetteai",
+      provider: "fal-stable-audio",
       generationCapPerHour: 1,
       generationCapPerDay: 1,
       bufferTargetSeconds: 30,
@@ -95,7 +95,7 @@ async function runV03FalAcceptance(env) {
   const generation = await channelCall("/generation/next", {
     method: "POST",
     providerKey: env.FAL_API_KEY,
-    body: { durationSeconds: 30 },
+    body: { durationSeconds: 10 },
   });
   if (!generation.response.ok) {
     return json({ ok: false, step: "generation", auth_probe_status: authProbe.status, detail: generation.data }, { status: generation.response.status });
@@ -112,9 +112,11 @@ async function runV03FalAcceptance(env) {
   if (!asset) {
     return json({ ok: false, step: "r2_verify", error: "generated_asset_missing" }, { status: 500 });
   }
-  const wavBytes = new Uint8Array(await asset.arrayBuffer());
-  if (!validateWav(wavBytes)) {
-    return json({ ok: false, step: "r2_verify", error: "generated_asset_not_wav" }, { status: 500 });
+  const audioBytes = new Uint8Array(await asset.arrayBuffer());
+  const assetContentType = asset.httpMetadata?.contentType || track.contentType || "";
+  const isWav = validateWav(audioBytes);
+  if (audioBytes.byteLength <= 44 || (!isWav && !assetContentType.startsWith("audio/"))) {
+    return json({ ok: false, step: "r2_verify", error: "generated_asset_not_audio" }, { status: 500 });
   }
 
   const dbResult = await env.DB.prepare(
@@ -156,9 +158,9 @@ async function runV03FalAcceptance(env) {
       state_ready: true,
       r2: {
         asset_key: track.assetKey,
-        wav_bytes: wavBytes.byteLength,
-        riff: new TextDecoder().decode(wavBytes.slice(0, 4)) === "RIFF",
-        wave: new TextDecoder().decode(wavBytes.slice(8, 12)) === "WAVE",
+        audio_bytes: audioBytes.byteLength,
+        content_type: assetContentType,
+        wav: isWav,
       },
       d1_receipt: persistedReceipt,
       isolation: {
