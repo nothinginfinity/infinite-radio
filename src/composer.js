@@ -20,7 +20,7 @@ import {
   createFixtureScore,
 } from "./score-schema.js";
 
-export const DEFAULT_COMPOSER_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+export const DEFAULT_COMPOSER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 function buildSchemaInstructions() {
   return [
