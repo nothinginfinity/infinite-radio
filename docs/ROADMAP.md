@@ -83,7 +83,7 @@ The prior V0.3 acceptance requirement for a real provider-rendered WAV/MP3 is su
 
 ---
 
-## V0.3.1 — Structured Composition Engine + Browser Synth — ACTIVE
+## V0.3.1 — Structured Composition Engine + Browser Synth — ACCEPTED
 
 Goal: make a versioned structured musical composition the canonical creative asset and prove original model-generated music can be composed, validated, persisted, and performed without requiring a paid external audio renderer.
 
@@ -113,22 +113,26 @@ channel musical DNA + listener intent
 - Workers AI composition is live through the provider-neutral composer adapter; untrusted model text is JSON-parsed only, then validated/normalized, with deterministic fallback on any failure
 - Channel Conductor now owns a persisted composition queue plus continuity state and exposes `POST /score/next`, `POST /score/select`, and retrievable public score state
 - checkpoint `a144ca5bf0b7a3b06141fad38a99768e29f228f2` live-proved real Workers AI composition -> validated persisted score, while invalid generations fail closed to fixture without silencing the channel
-- current Step 5 is the minimal browser workspace shell + native Web Audio renderer consuming validated `infinite-radio-score-v1`; the shell must be forward-compatible with later multi-view editing but must not pull Web DAW mutation features into V0.3.1
-- remaining active work after Step 5: composition prebuffer/scheduling, then live browser end-to-end acceptance
+- Step 5 shipped the mobile-first browser workspace shell and isolated native Web Audio `ScoreRenderer`; only validated allowlisted score data reaches playback and no arbitrary generated JavaScript, DSP, AudioWorklet, or unrestricted graph is accepted
+- Step 6 shipped a serialized composition-mutation boundary plus `POST /score/prebuffer`; concurrent prebuffer requests create at most one future score, and the browser automatically advances A -> B while beginning to prepare C
+- runtime checkpoint `60899cddb812d8a13279e466101ef0c320b6d5ac` passed CI `33359253121` and clean deploy/live acceptance `33359253094`
+- final real-model acceptance checkpoint `276f0bf34fc929c68eda7b9b0618e80152e35d8c` passed CI `33359597499` and deploy/live acceptance `33359597442`; production acceptance requires a genuine Workers AI score, verifies `provenance.composer = workers-ai`, proves the exact score is persisted/retrievable/selectable, and proves it does not appear in another channel
+- mobile live evidence `vb_9c84100c` returned HTTP 200 at 393x852 with scroll width equal to viewport width (393), proving the Step 6 player remains phone-width clean
+- V0.3.1 is accepted; direct score editing remains intentionally deferred to V0.5 and the next product slice is V0.4 listener/Visual experience
 
-### Acceptance
-- a real Workers AI call creates an original score from channel state + listener intent
-- deterministic validation succeeds before persistence or playback
-- score ownership and persistence remain channel-isolated
-- browser can audibly perform the score using only validated data and allowlisted patches
-- invalid/unavailable model output degrades to deterministic composition without losing station operation
-- score B can be prepared before score A ends
-- all existing BYOK credential/isolation tests remain green
-- CI, deploy, production acceptance, CairnStone reconciliation/lint, and AC1 handoff pass
+### Acceptance — PASSED
+- [x] a real Workers AI call creates an original score from channel state + listener intent
+- [x] deterministic validation succeeds before persistence or playback
+- [x] score ownership and persistence remain channel-isolated
+- [x] browser performs the score through native Web Audio using only validated data and allowlisted patches
+- [x] invalid/unavailable model output degrades to deterministic composition without losing station operation
+- [x] score B can be prepared before score A ends
+- [x] all existing BYOK credential/isolation tests remain green
+- [x] CI, deploy, production acceptance, CairnStone reconciliation/lint, and AC1 coordination evidence pass
 
 ---
 
-## V0.4 — Infinite Station / seamless listener experience — PLANNED
+## V0.4 — Infinite Station / seamless listener experience — NEXT / PLANNED
 
 Goal: make structured compositions feel like a continuous living station while establishing the reusable interaction shell that later becomes the Chat DAW.
 
