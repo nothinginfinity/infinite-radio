@@ -160,5 +160,6 @@ jobs:
             totalStarts,
           };
           console.log(`BROWSER_PLAYBACK_EVIDENCE ${JSON.stringify(evidence)}`);
+          console.log(`::notice title=Browser Playback Evidence::${JSON.stringify(evidence)}`);
           await browser.close();
           NODE
