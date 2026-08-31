@@ -496,6 +496,132 @@ export class ChannelConductor {
     }
   }
 
+  /**
+   * Persist an accepted infinite-radio-score-v1 composition as the durable,
+   * immutable canonical library artifact. Keyed on composition_id with
+   * ON CONFLICT DO NOTHING, so replaying/re-queuing the same composition can
+   * never rewrite or duplicate history. This is a first-class write, not
+   * best-effort metadata: failures are logged distinctly (console.error, not
+   * the bestEffort console.warn used for secondary metadata) and reported
+   * back to the caller as `persisted:false` rather than silently swallowed,
+   * while still never blocking playback/queueing if D1 is unavailable.
+   */
+  async writeCompositionRecord(score, status = "buffered", now = Date.now()) {
+    if (!this.env.DB) return { persisted: false, reason: "d1_unbound" };
+    const createdAt = new Date(now).toISOString();
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO compositions
+          (composition_id, channel_id, creator_id, schema_version, score_json, composer, model, bpm, key_root, key_mode, bars, duration_seconds, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(composition_id) DO NOTHING`,
+      )
+        .bind(
+          score.compositionId,
+          score.channelId,
+          score.creatorId ?? null,
+          score.schemaVersion,
+          JSON.stringify(score),
+          score.provenance?.composer ?? "unknown",
+          score.provenance?.model ?? null,
+          score.bpm,
+          score.key?.root ?? null,
+          score.key?.mode ?? null,
+          score.bars,
+          score.durationSeconds,
+          status,
+          createdAt,
+        )
+        .run();
+      return { persisted: true };
+    } catch (error) {
+      console.error("composition_library_write_failed", score.compositionId, error?.message ?? String(error));
+      return { persisted: false, reason: error?.message ?? "write_failed" };
+    }
+  }
+
+  /**
+   * Mark a previously-persisted composition as selected/current. This is a
+   * lifecycle-status transition on an already-durable record (the score_json
+   * itself is never touched), so it uses the same best-effort pattern as
+   * other secondary metadata writes elsewhere in this class.
+   */
+  async markCompositionSelected(compositionId, now = Date.now()) {
+    if (!this.env.DB) return;
+    await bestEffort(
+      this.env.DB.prepare(
+        `UPDATE compositions SET status = 'selected', selected_at = ? WHERE composition_id = ? AND status = 'buffered'`,
+      )
+        .bind(new Date(now).toISOString(), compositionId)
+        .run(),
+    );
+  }
+
+  /**
+   * Bounded, channel-scoped, newest-first read of the composition library.
+   * `limit` is always clamped server-side -- this never returns an
+   * unbounded history regardless of what the caller requests.
+   */
+  async readCompositionLibrary(channelId, { limit = 20, before = null } = {}) {
+    if (!this.env.DB) return [];
+    const boundedLimit = Math.max(1, Math.min(50, Math.trunc(Number(limit) || 20)));
+    try {
+      const statement = before
+        ? this.env.DB.prepare(
+            `SELECT composition_id, creator_id, composer, model, bpm, key_root, key_mode, bars, duration_seconds, status, created_at, selected_at
+             FROM compositions WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?`,
+          ).bind(channelId, before, boundedLimit)
+        : this.env.DB.prepare(
+            `SELECT composition_id, creator_id, composer, model, bpm, key_root, key_mode, bars, duration_seconds, status, created_at, selected_at
+             FROM compositions WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`,
+          ).bind(channelId, boundedLimit);
+      const result = await statement.all();
+      return (result?.results ?? []).map((row) => ({
+        compositionId: row.composition_id,
+        creatorId: row.creator_id,
+        composer: row.composer,
+        model: row.model,
+        bpm: row.bpm,
+        key: { root: row.key_root, mode: row.key_mode },
+        bars: row.bars,
+        durationSeconds: row.duration_seconds,
+        status: row.status,
+        createdAt: row.created_at,
+        selectedAt: row.selected_at,
+      }));
+    } catch (error) {
+      console.error("composition_library_read_failed", channelId, error?.message ?? String(error));
+      return [];
+    }
+  }
+
+  /**
+   * Read one full canonical score for replay. Returns null if unknown; the
+   * caller is responsible for enforcing channel scope against the returned
+   * `channelId` before handing the score back to a client.
+   */
+  async readCompositionScore(compositionId) {
+    if (!this.env.DB) return null;
+    try {
+      const row = await this.env.DB.prepare(
+        `SELECT channel_id, score_json, status, created_at, selected_at FROM compositions WHERE composition_id = ?`,
+      )
+        .bind(compositionId)
+        .first();
+      if (!row) return null;
+      return {
+        channelId: row.channel_id,
+        score: JSON.parse(row.score_json),
+        status: row.status,
+        createdAt: row.created_at,
+        selectedAt: row.selected_at,
+      };
+    } catch (error) {
+      console.error("composition_library_read_failed", compositionId, error?.message ?? String(error));
+      return null;
+    }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const channelId = request.headers.get("x-channel-id");
@@ -698,7 +824,8 @@ export class ChannelConductor {
           });
           freshState = queueComposition(freshState, result.score);
           await this.persist(freshState);
-          return { created: true, replaced: replaceFuture, previousBufferedCompositionId, result, state: freshState };
+          const libraryWrite = await this.writeCompositionRecord(result.score, "buffered");
+          return { created: true, replaced: replaceFuture, previousBufferedCompositionId, result, state: freshState, libraryWrite };
         });
         return json(
           {
@@ -711,6 +838,7 @@ export class ChannelConductor {
             fallback_reason: prebuffered.result?.fallbackReason ?? null,
             buffered_composition_id: prebuffered.state.compositionQueue[0]?.compositionId ?? null,
             composition_buffer_count: compositionBufferCount(prebuffered.state),
+            library_persisted: prebuffered.libraryWrite?.persisted ?? false,
             state: publicState(prebuffered.state),
           },
           { status: prebuffered.created ? 201 : 200 },
@@ -728,7 +856,8 @@ export class ChannelConductor {
           });
           freshState = queueComposition(freshState, result.score);
           await this.persist(freshState);
-          return { result, state: freshState };
+          const libraryWrite = await this.writeCompositionRecord(result.score, "buffered");
+          return { result, state: freshState, libraryWrite };
         });
         return json(
           {
@@ -738,6 +867,7 @@ export class ChannelConductor {
             fallback_reason: generated.result.fallbackReason,
             score: generated.result.score,
             composition_buffer_count: compositionBufferCount(generated.state),
+            library_persisted: generated.libraryWrite?.persisted ?? false,
             state: publicState(generated.state),
           },
           { status: 201 },
@@ -751,6 +881,7 @@ export class ChannelConductor {
           const next = selectNextComposition(freshState);
           if (!next.selected) throw new Error("composition_queue_empty");
           await this.persist(next.state);
+          await this.markCompositionSelected(next.selected.compositionId);
           return next;
         });
         return json({
@@ -758,6 +889,36 @@ export class ChannelConductor {
           score: selection.selected,
           composition_buffer_count: compositionBufferCount(selection.state),
           state: publicState(selection.state),
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/score/library") {
+        const limitParam = url.searchParams.get("limit");
+        const before = url.searchParams.get("before");
+        const entries = await this.readCompositionLibrary(state.channelId, {
+          limit: limitParam === null ? undefined : Number(limitParam),
+          before,
+        });
+        return json({
+          ok: true,
+          channel_id: state.channelId,
+          entries,
+          count: entries.length,
+        });
+      }
+
+      const libraryEntryMatch = url.pathname.match(/^\/score\/library\/([^/]+)$/);
+      if (request.method === "GET" && libraryEntryMatch) {
+        const compositionId = decodeURIComponent(libraryEntryMatch[1]);
+        const record = await this.readCompositionScore(compositionId);
+        if (!record) return json({ ok: false, error: "composition_not_found" }, { status: 404 });
+        if (record.channelId !== state.channelId) throw new Error("channel_scope_violation");
+        return json({
+          ok: true,
+          score: record.score,
+          status: record.status,
+          created_at: record.createdAt,
+          selected_at: record.selectedAt,
         });
       }
 
