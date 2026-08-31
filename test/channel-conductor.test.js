@@ -5,6 +5,7 @@ import {
   ChannelConductor,
   credentialRefFor,
   runFalCassetteAI,
+  runFalStableAudio,
   safeProviderErrorCode,
 } from "../src/index.js";
 
@@ -191,6 +192,42 @@ test("fal adapter uses a request-scoped client and validates WAV output", async 
   assert.equal(result.provenance.terms_uri, "https://fal.ai/legal/terms-of-service");
   assert.equal(result.provenance.api_terms_uri, "https://fal.ai/legal/api-services");
   assert.equal(new TextDecoder().decode(result.bytes.slice(0, 4)), "RIFF");
+});
+
+test("Stable Audio Open adapter uses BYOK credentials and normalizes free audio output", async () => {
+  const calls = [];
+  const wav = new Uint8Array(64);
+  wav.set(new TextEncoder().encode("RIFF"), 0);
+  wav.set(new TextEncoder().encode("WAVE"), 8);
+  const result = await runFalStableAudio({
+    apiKey: "stable-secret",
+    prompt: "128 BPM original midnight synth loop",
+    durationSeconds: 10,
+    clientFactory(config) {
+      assert.equal(config.credentials, "stable-secret");
+      return {
+        async subscribe(endpoint, options) {
+          calls.push({ endpoint, options });
+          return {
+            requestId: "stable-request-1",
+            data: { audio_file: { url: "https://example.test/stable.wav", content_type: "audio/wav" } },
+          };
+        },
+      };
+    },
+    async fetcher(url) {
+      assert.equal(url, "https://example.test/stable.wav");
+      return new Response(wav, { status: 200, headers: { "content-type": "audio/wav" } });
+    },
+  });
+  assert.equal(calls[0].endpoint, "fal-ai/stable-audio");
+  assert.equal(calls[0].options.input.seconds_total, 10);
+  assert.equal(result.providerRequestId, "stable-request-1");
+  assert.equal(result.durationSeconds, 10);
+  assert.equal(result.costMicrousd, 0);
+  assert.equal(result.contentType, "audio/wav");
+  assert.equal(result.provenance.provider, "fal-stable-audio");
+  assert.equal(result.provenance.model, "fal-ai/stable-audio");
 });
 
 test("BYOK generation stores only a credential fingerprint and channel-scoped asset", async () => {
