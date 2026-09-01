@@ -111,7 +111,11 @@ jobs:
           });
 
           const target = `${process.env.WORKER_URL}/?channel=demo-radio&creator=demo-creator`;
-          await page.goto(target, { waitUntil: "networkidle" });
+          // Infinite Radio intentionally performs ongoing station/prebuffer network
+          // work, so networkidle is not a stable navigation readiness signal.
+          // DOM readiness plus the explicit enabled Play control is the actual
+          // contract needed before real WebAudio acceptance begins.
+          await page.goto(target, { waitUntil: "domcontentloaded" });
           await page.waitForSelector("#play:not([disabled])", { timeout: 45000 });
 
           const snapshot = async () => page.evaluate(() => {
