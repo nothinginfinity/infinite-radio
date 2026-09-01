@@ -15,6 +15,7 @@ export const EDIT_COMMANDS = Object.freeze({
   TRANSPOSE: "Transpose",
   CHANGE_VELOCITY: "ChangeVelocity",
   SET_SECTION_ENERGY: "SetSectionEnergy",
+  TRANSFORM_SECTION: "TransformSection",
   SEMANTIC_MACRO: "SemanticMacro",
 });
 
@@ -89,6 +90,42 @@ function findSection(score, command) {
     return section;
   }
   throw new Error("editor_section_required");
+}
+
+function sectionBeatRange(score, section) {
+  const beatsPerBar = score.timeSignature.beatsPerBar * (4 / score.timeSignature.beatUnit);
+  return {
+    startBeat: section.startBar * beatsPerBar,
+    endBeat: (section.startBar + section.lengthBars) * beatsPerBar,
+  };
+}
+
+function applySectionTransform(candidate, command) {
+  const transform = String(command.transform ?? "").trim().toLowerCase();
+  if (transform !== "lift" && transform !== "drop") {
+    throw new Error("editor_section_transform_unsupported");
+  }
+  const section = findSection(candidate, command);
+  const direction = transform === "lift" ? 1 : -1;
+  const amount = clamp(assertFinite(command.amount ?? 0.65, "editor_section_transform_amount_required"), 0, 1);
+  const energyDelta = 0.08 + amount * 0.12;
+  const velocityDelta = 0.05 + amount * 0.1;
+  const baseEnergy = section.energy ?? candidate.continuity.energy ?? 0.5;
+  section.energy = clamp(baseEnergy + direction * energyDelta, 0, 1);
+
+  const { startBeat, endBeat } = sectionBeatRange(candidate, section);
+  for (const track of candidate.tracks) {
+    for (const event of track.events ?? []) {
+      if (event.start >= startBeat && event.start < endBeat) {
+        event.velocity = clamp(event.velocity + direction * velocityDelta, 0, 1);
+      }
+    }
+    for (const event of track.drumEvents ?? []) {
+      if (event.start >= startBeat && event.start < endBeat) {
+        event.velocity = clamp(event.velocity + direction * velocityDelta, 0, 1);
+      }
+    }
+  }
 }
 
 function setEffectAmount(track, effectType, amount, { create = false } = {}) {
@@ -212,6 +249,10 @@ export function applyEditCommand(score, command) {
     }
     case EDIT_COMMANDS.SET_SECTION_ENERGY: {
       findSection(candidate, command).energy = assertFinite(command.energy, "editor_section_energy_required");
+      break;
+    }
+    case EDIT_COMMANDS.TRANSFORM_SECTION: {
+      applySectionTransform(candidate, command);
       break;
     }
     case EDIT_COMMANDS.SEMANTIC_MACRO: {
