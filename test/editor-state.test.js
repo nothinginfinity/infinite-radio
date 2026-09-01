@@ -78,6 +78,65 @@ test("section energy edits stay validated and participate in local history", () 
   assert.equal(session.draftScore.sections[1].energy, 0.91);
 });
 
+test("section Lift and Drop reshape only the selected section and share local history", () => {
+  const base = fixture();
+  const sectionIndex = 1;
+  const section = base.sections[sectionIndex];
+  const beatsPerBar = base.timeSignature.beatsPerBar * (4 / base.timeSignature.beatUnit);
+  const startBeat = section.startBar * beatsPerBar;
+  const endBeat = (section.startBar + section.lengthBars) * beatsPerBar;
+  const lead = base.tracks.find((track) => track.id === "lead");
+  const drums = base.tracks.find((track) => track.id === "drums");
+  const leadInsideIndex = lead.events.findIndex((event) => event.start >= startBeat && event.start < endBeat);
+  const leadOutsideIndex = lead.events.findIndex((event) => event.start < startBeat);
+  const drumInsideIndex = drums.drumEvents.findIndex((event) => event.start >= startBeat && event.start < endBeat);
+  const drumOutsideIndex = drums.drumEvents.findIndex((event) => event.start < startBeat);
+  assert.ok(leadInsideIndex >= 0 && leadOutsideIndex >= 0 && drumInsideIndex >= 0 && drumOutsideIndex >= 0);
+
+  const lifted = applyEditCommand(base, {
+    type: EDIT_COMMANDS.TRANSFORM_SECTION,
+    sectionIndex,
+    transform: "lift",
+    amount: 0.65,
+  });
+  assert.ok(lifted.sections[sectionIndex].energy > base.sections[sectionIndex].energy);
+  assert.ok(lifted.tracks.find((track) => track.id === "lead").events[leadInsideIndex].velocity > lead.events[leadInsideIndex].velocity);
+  assert.ok(lifted.tracks.find((track) => track.id === "drums").drumEvents[drumInsideIndex].velocity > drums.drumEvents[drumInsideIndex].velocity);
+  assert.equal(lifted.tracks.find((track) => track.id === "lead").events[leadOutsideIndex].velocity, lead.events[leadOutsideIndex].velocity);
+  assert.equal(lifted.tracks.find((track) => track.id === "drums").drumEvents[drumOutsideIndex].velocity, drums.drumEvents[drumOutsideIndex].velocity);
+  assert.equal(lifted.continuity.energy, base.continuity.energy);
+  assert.doesNotThrow(() => validate(lifted));
+
+  const dropped = applyEditCommand(base, {
+    type: EDIT_COMMANDS.TRANSFORM_SECTION,
+    sectionIndex,
+    transform: "drop",
+    amount: 0.65,
+  });
+  assert.ok(dropped.sections[sectionIndex].energy < base.sections[sectionIndex].energy);
+  assert.ok(dropped.tracks.find((track) => track.id === "lead").events[leadInsideIndex].velocity < lead.events[leadInsideIndex].velocity);
+  assert.equal(dropped.tracks.find((track) => track.id === "lead").events[leadOutsideIndex].velocity, lead.events[leadOutsideIndex].velocity);
+  assert.doesNotThrow(() => validate(dropped));
+
+  let session = createEditorSession(base);
+  session = dispatchEdit(session, {
+    type: EDIT_COMMANDS.TRANSFORM_SECTION,
+    sectionIndex,
+    transform: "lift",
+    amount: 0.65,
+  });
+  const liftedEnergy = session.draftScore.sections[sectionIndex].energy;
+  session = undoEdit(session);
+  assert.equal(session.draftScore.sections[sectionIndex].energy, base.sections[sectionIndex].energy);
+  session = redoEdit(session);
+  assert.equal(session.draftScore.sections[sectionIndex].energy, liftedEnergy);
+
+  assert.throws(
+    () => applyEditCommand(base, { type: EDIT_COMMANDS.TRANSFORM_SECTION, sectionIndex, transform: "explode" }),
+    /editor_section_transform_unsupported/,
+  );
+});
+
 test("semantic brightness, energy, and space macros are deterministic validated transforms", () => {
   const base = fixture();
   const dryDraft = applyEditCommand(base, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "dry", amount: 0.8 });
