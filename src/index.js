@@ -24,6 +24,15 @@ import {
   upgradePersistedChannelState,
 } from "./station-state.js";
 import { buildComposerContext, composeChannelScore } from "./composer.js";
+import {
+  createEditorSession,
+  dispatchEdit,
+  draftHasChanges,
+  previewScore as previewDraftScore,
+  redoEdit,
+  resetDraft,
+  undoEdit,
+} from "./editor-state.js";
 
 function json(data, init = {}) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -66,10 +75,20 @@ function errorResponse(error) {
     "invalid_generated_audio",
     "valid_composition_required",
     "composition_queue_empty",
+    "draft_no_current_composition",
+    "draft_not_started",
+    "draft_command_required",
   ]);
+  const message = error?.message ?? "internal_error";
+  // Every EditCommand rejection thrown by editor-state.js's applyEditCommand
+  // uses the "editor_" prefix (e.g. editor_note_pitch_out_of_range). Those
+  // are always caller/input errors -- a bad or unsupported command -- never
+  // server faults, so they are treated as 400s as a class rather than a
+  // manually maintained enumeration that would silently go stale.
+  const isClientError = clientErrors.has(message) || message.startsWith("editor_");
   return json(
-    { ok: false, error: error?.message ?? "internal_error" },
-    { status: clientErrors.has(error?.message) ? 400 : 500 },
+    { ok: false, error: message },
+    { status: isClientError ? 400 : 500 },
   );
 }
 
@@ -299,6 +318,34 @@ export class ChannelConductor {
       } catch {
       }
     }
+  }
+
+  /**
+   * V0.6 Step 1 -- authoritative server-side draft session.
+   *
+   * This wraps the exact same deterministic EditCommand vocabulary and
+   * reducer already covered by test/editor-state.test.js
+   * (createEditorSession/dispatchEdit/undoEdit/redoEdit/resetDraft/
+   * previewScore in ./editor-state.js). It is intentionally the one
+   * authoritative draft per channel -- the same shape a server-calling LLM
+   * tool layer or MCP surface will operate against later -- rather than a
+   * second bespoke session store. Storage key is separate from
+   * "channel-state" so draft edits never touch the canonical composition
+   * record.
+   */
+  async loadDraftSession() {
+    return (await this.ctx.storage.get("draft-session")) ?? null;
+  }
+
+  async persistDraftSession(session) {
+    await this.ctx.storage.put("draft-session", session);
+    return session;
+  }
+
+  async requireDraftSession() {
+    const session = await this.loadDraftSession();
+    if (!session) throw new Error("draft_not_started");
+    return session;
   }
 
   async generateWithProvider(state, prompt, rawKey, durationSeconds) {
@@ -985,6 +1032,95 @@ export class ChannelConductor {
           created_at: record.createdAt,
           selected_at: record.selectedAt,
         });
+      }
+
+      if (request.method === "POST" && url.pathname === "/draft/start") {
+        const freshState = await this.load(channelId, creatorId);
+        assertChannelOwner(freshState, creatorId);
+        if (!freshState.currentComposition) throw new Error("draft_no_current_composition");
+        const session = createEditorSession(freshState.currentComposition);
+        await this.persistDraftSession(session);
+        return json(
+          {
+            ok: true,
+            hasChanges: draftHasChanges(session),
+            baseScore: session.baseScore,
+            draftScore: session.draftScore,
+          },
+          { status: 201 },
+        );
+      }
+
+      if (request.method === "GET" && url.pathname === "/draft") {
+        const session = await this.requireDraftSession();
+        return json({
+          ok: true,
+          hasChanges: draftHasChanges(session),
+          baseScore: session.baseScore,
+          draftScore: session.draftScore,
+          historyLength: session.history.length,
+          futureLength: session.future.length,
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/draft/edit") {
+        const session = await this.requireDraftSession();
+        const body = (await readJson(request)) ?? {};
+        if (!body.command || typeof body.command !== "object") throw new Error("draft_command_required");
+        const next = dispatchEdit(session, body.command);
+        await this.persistDraftSession(next);
+        return json({
+          ok: true,
+          hasChanges: draftHasChanges(next),
+          draftScore: next.draftScore,
+          historyLength: next.history.length,
+          futureLength: next.future.length,
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/draft/undo") {
+        const session = await this.requireDraftSession();
+        const next = undoEdit(session);
+        await this.persistDraftSession(next);
+        return json({
+          ok: true,
+          hasChanges: draftHasChanges(next),
+          draftScore: next.draftScore,
+          historyLength: next.history.length,
+          futureLength: next.future.length,
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/draft/redo") {
+        const session = await this.requireDraftSession();
+        const next = redoEdit(session);
+        await this.persistDraftSession(next);
+        return json({
+          ok: true,
+          hasChanges: draftHasChanges(next),
+          draftScore: next.draftScore,
+          historyLength: next.history.length,
+          futureLength: next.future.length,
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/draft/reset") {
+        const session = await this.requireDraftSession();
+        const next = resetDraft(session);
+        await this.persistDraftSession(next);
+        return json({
+          ok: true,
+          hasChanges: draftHasChanges(next),
+          draftScore: next.draftScore,
+          historyLength: next.history.length,
+          futureLength: next.future.length,
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/draft/preview") {
+        const session = await this.requireDraftSession();
+        const mode = url.searchParams.get("mode") === "original" ? "original" : "draft";
+        return json({ ok: true, mode, score: previewDraftScore(session, mode) });
       }
 
       if (request.method === "POST" && url.pathname === "/brief") {
