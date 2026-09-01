@@ -1,5 +1,6 @@
 import {
   EFFECT_TYPES,
+  SCORE_LIMITS,
   SYNTH_PATCHES,
   validateAndNormalizeScore,
 } from "./score-schema.js";
@@ -16,6 +17,9 @@ export const EDIT_COMMANDS = Object.freeze({
   CHANGE_VELOCITY: "ChangeVelocity",
   SET_SECTION_ENERGY: "SetSectionEnergy",
   TRANSFORM_SECTION: "TransformSection",
+  DUPLICATE_SECTION: "DuplicateSection",
+  MOVE_SECTION: "MoveSection",
+  RESIZE_SECTION: "ResizeSection",
   SEMANTIC_MACRO: "SemanticMacro",
 });
 
@@ -78,26 +82,195 @@ function findTrack(score, trackId) {
   return track;
 }
 
-function findSection(score, command) {
+function findSectionIndex(score, command) {
   if (Number.isInteger(command.sectionIndex)) {
-    const section = score.sections[command.sectionIndex];
-    if (!section) throw new Error("editor_section_not_found");
-    return section;
+    if (!score.sections[command.sectionIndex]) throw new Error("editor_section_not_found");
+    return command.sectionIndex;
   }
   if (typeof command.label === "string") {
-    const section = score.sections.find((item) => item.label === command.label);
-    if (!section) throw new Error("editor_section_not_found");
-    return section;
+    const sectionIndex = score.sections.findIndex((item) => item.label === command.label);
+    if (sectionIndex < 0) throw new Error("editor_section_not_found");
+    return sectionIndex;
   }
   throw new Error("editor_section_required");
 }
 
+function findSection(score, command) {
+  return score.sections[findSectionIndex(score, command)];
+}
+
+function beatsPerBar(score) {
+  return score.timeSignature.beatsPerBar * (4 / score.timeSignature.beatUnit);
+}
+
 function sectionBeatRange(score, section) {
-  const beatsPerBar = score.timeSignature.beatsPerBar * (4 / score.timeSignature.beatUnit);
+  const unit = beatsPerBar(score);
   return {
-    startBeat: section.startBar * beatsPerBar,
-    endBeat: (section.startBar + section.lengthBars) * beatsPerBar,
+    startBeat: section.startBar * unit,
+    endBeat: (section.startBar + section.lengthBars) * unit,
   };
+}
+
+function assertLinearSectionLayout(score) {
+  if (!Array.isArray(score.sections) || score.sections.length === 0) {
+    throw new Error("editor_section_layout_required");
+  }
+  let nextStartBar = 0;
+  for (const section of score.sections) {
+    if (section.startBar !== nextStartBar) throw new Error("editor_section_layout_not_linear");
+    nextStartBar += section.lengthBars;
+  }
+  if (nextStartBar !== score.bars) throw new Error("editor_section_layout_not_linear");
+  return score.sections;
+}
+
+function resetSectionStarts(score) {
+  let startBar = 0;
+  for (const section of score.sections) {
+    section.startBar = startBar;
+    startBar += section.lengthBars;
+  }
+}
+
+function sortTrackEvents(score) {
+  for (const track of score.tracks) {
+    track.events?.sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+    track.drumEvents?.sort((a, b) => a.start - b.start || a.patch.localeCompare(b.patch));
+  }
+}
+
+function copiedSectionLabel(score, label) {
+  const labels = new Set(score.sections.map((section) => section.label));
+  const base = String(label || "section").slice(0, 24);
+  for (let copyNumber = 1; copyNumber <= SCORE_LIMITS.MAX_SECTIONS; copyNumber += 1) {
+    const suffix = copyNumber === 1 ? " copy" : ` copy ${copyNumber}`;
+    const candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`;
+    if (!labels.has(candidate)) return candidate;
+  }
+  throw new Error("editor_section_label_exhausted");
+}
+
+function sectionIndexForBeat(ranges, beat) {
+  const index = ranges.findIndex(({ startBeat, endBeat }) => beat >= startBeat && beat < endBeat);
+  if (index < 0) throw new Error("editor_section_event_outside_layout");
+  return index;
+}
+
+function applySectionDuplicate(candidate, command) {
+  assertLinearSectionLayout(candidate);
+  const sectionIndex = findSectionIndex(candidate, command);
+  const section = candidate.sections[sectionIndex];
+  if (candidate.sections.length >= SCORE_LIMITS.MAX_SECTIONS) throw new Error("editor_section_limit_reached");
+  if (candidate.bars + section.lengthBars > SCORE_LIMITS.MAX_BARS) throw new Error("editor_bar_limit_reached");
+
+  const { startBeat, endBeat } = sectionBeatRange(candidate, section);
+  const insertedBeats = section.lengthBars * beatsPerBar(candidate);
+  for (const track of candidate.tracks) {
+    const noteCopies = (track.events ?? [])
+      .filter((event) => event.start >= startBeat && event.start < endBeat)
+      .map((event) => ({ ...event, start: event.start + insertedBeats }));
+    const drumCopies = (track.drumEvents ?? [])
+      .filter((event) => event.start >= startBeat && event.start < endBeat)
+      .map((event) => ({ ...event, start: event.start + insertedBeats }));
+    for (const event of track.events ?? []) {
+      if (event.start >= endBeat) event.start += insertedBeats;
+    }
+    for (const event of track.drumEvents ?? []) {
+      if (event.start >= endBeat) event.start += insertedBeats;
+    }
+    track.events?.push(...noteCopies);
+    track.drumEvents?.push(...drumCopies);
+  }
+
+  candidate.sections.splice(sectionIndex + 1, 0, {
+    ...clone(section),
+    label: copiedSectionLabel(candidate, section.label),
+  });
+  candidate.bars += section.lengthBars;
+  resetSectionStarts(candidate);
+  sortTrackEvents(candidate);
+}
+
+function applySectionMove(candidate, command) {
+  assertLinearSectionLayout(candidate);
+  const sectionIndex = findSectionIndex(candidate, command);
+  const direction = assertFinite(command.direction, "editor_section_move_direction_required");
+  if (!Number.isInteger(direction) || Math.abs(direction) !== 1) throw new Error("editor_section_move_direction_invalid");
+  const targetIndex = sectionIndex + direction;
+  if (targetIndex < 0 || targetIndex >= candidate.sections.length) throw new Error("editor_section_move_out_of_range");
+
+  const unit = beatsPerBar(candidate);
+  const originalSections = candidate.sections.map((section) => clone(section));
+  const originalRanges = originalSections.map((section) => sectionBeatRange(candidate, section));
+  const order = originalSections.map((_, index) => index);
+  [order[sectionIndex], order[targetIndex]] = [order[targetIndex], order[sectionIndex]];
+  const newStartBeat = new Map();
+  let cursorBar = 0;
+  for (const originalIndex of order) {
+    newStartBeat.set(originalIndex, cursorBar * unit);
+    cursorBar += originalSections[originalIndex].lengthBars;
+  }
+
+  for (const track of candidate.tracks) {
+    for (const event of [...(track.events ?? []), ...(track.drumEvents ?? [])]) {
+      const originalIndex = sectionIndexForBeat(originalRanges, event.start);
+      event.start = newStartBeat.get(originalIndex) + (event.start - originalRanges[originalIndex].startBeat);
+    }
+  }
+  candidate.sections = order.map((originalIndex) => clone(originalSections[originalIndex]));
+  resetSectionStarts(candidate);
+  sortTrackEvents(candidate);
+}
+
+function applySectionResize(candidate, command) {
+  assertLinearSectionLayout(candidate);
+  const sectionIndex = findSectionIndex(candidate, command);
+  const section = candidate.sections[sectionIndex];
+  const deltaBars = assertFinite(command.deltaBars, "editor_section_resize_delta_required");
+  if (!Number.isInteger(deltaBars) || Math.abs(deltaBars) !== 1) throw new Error("editor_section_resize_delta_invalid");
+  if (deltaBars < 0 && section.lengthBars <= 1) throw new Error("editor_section_min_length");
+  if (deltaBars > 0 && candidate.bars >= SCORE_LIMITS.MAX_BARS) throw new Error("editor_bar_limit_reached");
+
+  const unit = beatsPerBar(candidate);
+  const { endBeat } = sectionBeatRange(candidate, section);
+  const finalBarStart = endBeat - unit;
+  if (deltaBars > 0) {
+    for (const track of candidate.tracks) {
+      const noteCopies = (track.events ?? [])
+        .filter((event) => event.start >= finalBarStart && event.start < endBeat)
+        .map((event) => ({ ...event, start: event.start + unit }));
+      const drumCopies = (track.drumEvents ?? [])
+        .filter((event) => event.start >= finalBarStart && event.start < endBeat)
+        .map((event) => ({ ...event, start: event.start + unit }));
+      for (const event of track.events ?? []) if (event.start >= endBeat) event.start += unit;
+      for (const event of track.drumEvents ?? []) if (event.start >= endBeat) event.start += unit;
+      track.events?.push(...noteCopies);
+      track.drumEvents?.push(...drumCopies);
+    }
+  } else {
+    for (const track of candidate.tracks) {
+      track.events = (track.events ?? []).flatMap((event) => {
+        if (event.start >= finalBarStart && event.start < endBeat) return [];
+        const next = { ...event };
+        if (next.start >= endBeat) next.start -= unit;
+        if (next.start < finalBarStart && next.start + next.duration > finalBarStart) {
+          next.duration = Math.max(0.0001, finalBarStart - next.start);
+        }
+        return [next];
+      });
+      track.drumEvents = (track.drumEvents ?? []).flatMap((event) => {
+        if (event.start >= finalBarStart && event.start < endBeat) return [];
+        const next = { ...event };
+        if (next.start >= endBeat) next.start -= unit;
+        return [next];
+      });
+    }
+  }
+
+  section.lengthBars += deltaBars;
+  candidate.bars += deltaBars;
+  resetSectionStarts(candidate);
+  sortTrackEvents(candidate);
 }
 
 function applySectionTransform(candidate, command) {
@@ -253,6 +426,18 @@ export function applyEditCommand(score, command) {
     }
     case EDIT_COMMANDS.TRANSFORM_SECTION: {
       applySectionTransform(candidate, command);
+      break;
+    }
+    case EDIT_COMMANDS.DUPLICATE_SECTION: {
+      applySectionDuplicate(candidate, command);
+      break;
+    }
+    case EDIT_COMMANDS.MOVE_SECTION: {
+      applySectionMove(candidate, command);
+      break;
+    }
+    case EDIT_COMMANDS.RESIZE_SECTION: {
+      applySectionResize(candidate, command);
       break;
     }
     case EDIT_COMMANDS.SEMANTIC_MACRO: {
