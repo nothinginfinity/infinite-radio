@@ -192,12 +192,16 @@ jobs:
           await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("matches original"), null, { timeout: 5000 });
           await page.locator("#editor-exit").click({ force: true });
           await page.waitForFunction(() => !document.getElementById("editor-sheet")?.classList.contains("open"), null, { timeout: 5000 });
-          // The live-rejoin status text is intentionally transient: if the
-          // authoritative position lands near the buffer threshold, the next
-          // animation frame can replace "Back to live" with "Preparing next
-          // composition…". Verify the durable behavior instead of racing a
-          // one-frame label: audio is running and the live playhead advances.
-          await page.waitForFunction(() => document.getElementById("audio-chip")?.textContent?.includes("running"), null, { timeout: 10000 });
+          // Exiting can land on either an active authoritative composition or
+          // one that ended while the local editor was open. In the latter
+          // case the truthful live state is "preparing next composition" and
+          // may involve a slow model call. Wait for rejoin to resolve into a
+          // durable live state, then require playhead motion only when the
+          // station is not legitimately buffering the next composition.
+          await page.waitForFunction(() => {
+            const status = document.getElementById("status")?.textContent ?? "";
+            return status.startsWith("Back to live") && !status.includes("rejoining");
+          }, null, { timeout: 10000 });
           const livePositionAfterExitFirst = await page.locator("#position").textContent();
           await page.waitForTimeout(1600);
           const livePositionAfterExitSecond = await page.locator("#position").textContent();
@@ -207,10 +211,16 @@ jobs:
             editorOpen: document.getElementById("editor-sheet")?.classList.contains("open") ?? false,
             draftLabel: document.getElementById("editor-draft-label")?.textContent ?? null,
             status: document.getElementById("status")?.textContent ?? null,
+            audioChip: document.getElementById("audio-chip")?.textContent ?? null,
           }));
+          const preparingNext = String(editorEvidence.status).includes("preparing next composition");
           assert.ok(editorEvidence.scrollWidth <= editorEvidence.viewportWidth, `mobile horizontal overflow: ${JSON.stringify(editorEvidence)}`);
           assert.equal(editorEvidence.editorOpen, false, "editor must close before live playback resumes");
-          assert.notEqual(livePositionAfterExitSecond, livePositionAfterExitFirst, `live playhead must advance after editor exit: ${JSON.stringify({ livePositionAfterExitFirst, livePositionAfterExitSecond, editorEvidence })}`);
+          if (!preparingNext) {
+            assert.notEqual(livePositionAfterExitSecond, livePositionAfterExitFirst, `live playhead must advance after editor exit: ${JSON.stringify({ livePositionAfterExitFirst, livePositionAfterExitSecond, editorEvidence })}`);
+            assert.ok(String(editorEvidence.audioChip).includes("running"), `audio must be running after live rejoin: ${JSON.stringify(editorEvidence)}`);
+          }
+          assert.ok(!String(editorEvidence.status).startsWith("Back to live failed:"), `live rejoin failed: ${editorEvidence.status}`);
           assert.ok(!String(editorEvidence.status).startsWith("Station paused:"), `live rejoin paused the station: ${editorEvidence.status}`);
           assert.ok(!String(editorEvidence.status).startsWith("Previewing "), `editor preview state leaked after exit: ${editorEvidence.status}`);
           assert.equal(pageErrors.length, 0, `page errors after editor flow: ${pageErrors.join(" | ")}`);
