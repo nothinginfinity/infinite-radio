@@ -195,13 +195,26 @@ Goal: turn the structured-score player into an editable browser-native workstati
 4. **One score, many skill levels:** every edit must remain visible/audible across Visual, Arrange, Piano, and Mix so beginners and producers manipulate the same draft at different abstraction levels.
 5. **No persistence pressure yet:** early edits stay local and reversible. Immutable Save Version/provenance remains a deliberate later boundary rather than persisting every slider movement.
 
-### Step 1 — local draft + instant A/B editing loop — NEXT
+### Step 1 — local draft + instant A/B editing loop — ACCEPTED
 - local draft cloned from the current validated score, never silently replacing canonical server state
 - deterministic `EditCommand`/reducer boundary with bounded undo/redo
 - Original/Draft A-B preview using the existing Web Audio renderer
 - first controls: tempo, per-track gain/pan/patch, transpose/register, and semantic brightness/energy/space macros
 - every candidate draft is checked before audible preview; leaving the editor can rejoin authoritative live station state
 - mobile editing opens as a focused sheet/fullscreen surface rather than shrinking the active canvas into an unusable desktop DAW
+- implemented and live-accepted across a sequence of bounded 2026-09-01 slices: the editing-quality foundation, the focused mobile browser editor, and the Arrange projection (section energy, section lift/drop reordering, and section structure editing)
+
+### Step 1a — minimal Piano note editing — ACCEPTED
+- selected-section Piano roll scoped to the currently selected Arrange section and melodic track
+- melodic-track selection and existing-note selection
+- pitch adjustment (±1 semitone / ±1 octave), duration adjustment (±0.25 beat), and velocity adjustment on the selected note
+- every edit flows through the same Draft history, canonical validation, immediate Web Audio audition, Original/Draft A-B, undo/redo/reset, and safe live-rejoin architecture as Step 1 — Piano editing is not a separate mini-DAW
+- deliberately deferred: note creation/deletion, free dragging, quantization, and separate persistence
+- final repo HEAD `43c361c83efb5e39fd1749dcf46fe059b3eac955`; PR #1 staging CI `33515875983`, main CI `33515958434`, and deploy + strict live + real Chromium/WebAudio acceptance `33515958612` all succeeded; mobile browser acceptance passed at 393x852
+
+### Step 1b — note add/delete — NEXT
+- add and delete notes constrained to the selected melodic track and Arrange section, using the same validated Draft history/audition architecture proven in Step 1a
+- clean foundation for pointer drag and snap/quantization once add/delete invariants are proven
 
 ### Step 2 — musical vocabulary + sound-quality expansion
 - extend the allowlisted synth/drum/effect vocabulary without permitting arbitrary executable DSP or arbitrary AudioNode graphs
