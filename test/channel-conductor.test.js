@@ -140,6 +140,45 @@ test("Durable Object owner boundary rejects a different creator", async () => {
   assert.equal(body.error, "channel_owner_required");
 });
 
+test("read-only playback rejoin bypasses an in-flight composition mutation when no successor is queued", async () => {
+  const storage = new MemoryStorage();
+  const conductor = new ChannelConductor(makeCtx(storage), {});
+  await conductor.fetch(
+    channelRequest("/init", {
+      method: "POST",
+      body: { creatorId: "creator-a" },
+    }),
+  );
+
+  const state = await storage.get("channel-state");
+  state.currentComposition = {
+    compositionId: "ended-score",
+    durationSeconds: 1,
+  };
+  state.currentCompositionStartedAt = new Date(Date.now() - 5000).toISOString();
+  state.compositionQueue = [];
+  await storage.put("channel-state", state);
+
+  let releaseMutation;
+  conductor.compositionMutationTail = new Promise((resolve) => {
+    releaseMutation = resolve;
+  });
+
+  try {
+    const response = await Promise.race([
+      conductor.fetch(channelRequest("/playback/rejoin", { method: "POST", body: {} })),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("read_only_rejoin_blocked")), 250)),
+    ]);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.advanced, false);
+    assert.equal(body.playback.ended, true);
+    assert.equal(body.state.compositionQueue.length, 0);
+  } finally {
+    releaseMutation();
+  }
+});
+
 test("provider errors are normalized before state or D1 persistence", () => {
   assert.equal(
     safeProviderErrorCode(new Error("upstream failed with secret-key-123")),
