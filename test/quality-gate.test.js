@@ -14,7 +14,7 @@ function scoreWith(overrides = {}) {
       schemaVersion: SCORE_SCHEMA_VERSION,
       compositionId: overrides.compositionId ?? "quality-test-comp",
       bpm: 120,
-      timeSignature: { beatsPerBar: 4, beatUnit: 4 },
+      timeSignature: overrides.timeSignature ?? { beatsPerBar: 4, beatUnit: 4 },
       key: { root: "C", mode: "minor" },
       bars: overrides.bars ?? 16,
       sections: [{ startBar: 0, lengthBars: overrides.bars ?? 16, label: "main" }],
@@ -74,6 +74,31 @@ test("a sustained ambient event spanning most of the composition passes despite 
   const coverage = assertMusicalQuality(score);
   assert.equal(coverage.activeRatio, 1);
   assert.ok(coverage.finalSectionActive);
+});
+
+test("compound-meter coverage uses quarter-note beat units consistently with duration and playback", () => {
+  const bars = 8;
+  const quarterBeatsPerBar = 6 * (4 / 8);
+  const score = scoreWith({
+    bars,
+    timeSignature: { beatsPerBar: 6, beatUnit: 8 },
+    tracks: [
+      {
+        id: "pad",
+        patch: "triangle_pad",
+        events: Array.from({ length: bars }, (_, bar) => ({
+          pitch: 57 + (bar % 3),
+          start: bar * quarterBeatsPerBar,
+          duration: quarterBeatsPerBar - 0.1,
+          velocity: 0.55,
+        })),
+      },
+    ],
+  });
+  const coverage = assertMusicalQuality(score);
+  assert.equal(coverage.activeRatio, 1);
+  assert.equal(coverage.finalSectionActive, true);
+  assert.equal(score.durationSeconds, 12);
 });
 
 test("a rhythmically active fixture-style score passes the quality gate", () => {
