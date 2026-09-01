@@ -56,6 +56,34 @@ test("track mix, patch, and transpose edits remain inside the canonical score co
   assert.doesNotThrow(() => validate(draft));
 });
 
+test("Piano note edits change one melodic event through canonical validation and history", () => {
+  const base = fixture();
+  const original = structuredClone(base.tracks.find((track) => track.id === "lead").events[0]);
+  let session = createEditorSession(base);
+
+  session = dispatchEdit(session, {
+    type: EDIT_COMMANDS.EDIT_NOTE,
+    trackId: "lead",
+    eventIndex: 0,
+    pitch: original.pitch + 1,
+    duration: original.duration + 0.25,
+    velocity: 0.33,
+  });
+
+  const edited = session.draftScore.tracks.find((track) => track.id === "lead").events[0];
+  assert.equal(base.tracks.find((track) => track.id === "lead").events[0].pitch, original.pitch);
+  assert.equal(edited.pitch, original.pitch + 1);
+  assert.equal(edited.duration, original.duration + 0.25);
+  assert.equal(edited.velocity, 0.33);
+  assert.equal(draftHasChanges(session), true);
+  assert.doesNotThrow(() => validate(session.draftScore));
+
+  session = undoEdit(session);
+  assert.deepEqual(session.draftScore.tracks.find((track) => track.id === "lead").events[0], original);
+  session = redoEdit(session);
+  assert.equal(session.draftScore.tracks.find((track) => track.id === "lead").events[0].pitch, original.pitch + 1);
+});
+
 test("section energy edits stay validated and participate in local history", () => {
   const base = fixture();
   const originalEnergy = base.sections[1].energy;
@@ -335,5 +363,17 @@ test("invalid edits fail closed instead of producing a previewable invalid score
   assert.throws(
     () => applyEditCommand(base, { type: EDIT_COMMANDS.SET_TRACK_PATCH, trackId: "lead", patch: "arbitrary_dsp" }),
     /editor_patch_unsupported/,
+  );
+  assert.throws(
+    () => applyEditCommand(base, { type: EDIT_COMMANDS.EDIT_NOTE, trackId: "drums", eventIndex: 0, pitch: 60 }),
+    /editor_note_track_required/,
+  );
+  assert.throws(
+    () => applyEditCommand(base, { type: EDIT_COMMANDS.EDIT_NOTE, trackId: "lead", eventIndex: 0, pitch: 128 }),
+    /editor_note_pitch_out_of_range/,
+  );
+  assert.throws(
+    () => applyEditCommand(base, { type: EDIT_COMMANDS.EDIT_NOTE, trackId: "lead", eventIndex: 0 }),
+    /editor_note_edit_required/,
   );
 });

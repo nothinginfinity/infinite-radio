@@ -290,6 +290,60 @@ jobs:
             }
             sectionStructureEvidence = structureEvidence;
           }
+
+          let pianoNoteCount = await page.locator("#editor-piano-grid .piano-note").count();
+          if (pianoNoteCount === 0 && arrangeSegmentCount > 1) {
+            for (let index = 1; index < arrangeSegmentCount && pianoNoteCount === 0; index += 1) {
+              await page.locator("#editor-arrange-map .arrange-segment").nth(index).click({ force: true });
+              pianoNoteCount = await page.locator("#editor-piano-grid .piano-note").count();
+            }
+          }
+          assert.ok(pianoNoteCount > 0, "Piano surface must expose at least one melodic note in the production editor");
+          await page.locator("#editor-piano-grid .piano-note").first().click({ force: true });
+          const pianoBefore = await page.evaluate(() => ({
+            label: document.getElementById("editor-note-label")?.textContent ?? null,
+            pitch: Number(document.querySelector("#editor-piano-grid .piano-note.active")?.dataset.pitch),
+            velocity: document.getElementById("editor-note-velocity")?.value ?? null,
+          }));
+          assert.ok(Number.isInteger(pianoBefore.pitch), `selected Piano note must expose a MIDI pitch: ${JSON.stringify(pianoBefore)}`);
+          const pitchUpDisabled = await page.locator("#editor-note-up").isDisabled();
+          const pitchControl = pitchUpDisabled ? "#editor-note-down" : "#editor-note-up";
+          const pitchDelta = pitchUpDisabled ? -1 : 1;
+          assert.equal(await page.locator(pitchControl).isDisabled(), false, "Piano pitch nudge must be available");
+          await page.locator(pitchControl).click({ force: true });
+          await page.waitForFunction(expected => Number(document.querySelector("#editor-piano-grid .piano-note.active")?.dataset.pitch) === expected, pianoBefore.pitch + pitchDelta, { timeout: 5000 });
+          await page.waitForFunction(() => {
+            const status = document.getElementById("status")?.textContent ?? "";
+            return status.includes("Auditioning note") && status.includes("Draft");
+          }, null, { timeout: 5000 });
+          const pianoAfterPitch = await page.evaluate(() => ({
+            label: document.getElementById("editor-note-label")?.textContent ?? null,
+            pitch: Number(document.querySelector("#editor-piano-grid .piano-note.active")?.dataset.pitch),
+            status: document.getElementById("status")?.textContent ?? null,
+          }));
+          await page.locator("#editor-undo").click({ force: true });
+          await page.waitForFunction(expected => Number(document.querySelector("#editor-piano-grid .piano-note.active")?.dataset.pitch) === expected, pianoBefore.pitch, { timeout: 5000 });
+
+          const originalVelocity = Number(pianoBefore.velocity);
+          const editedVelocity = String(Math.round((originalVelocity >= 0.2 ? originalVelocity - 0.15 : originalVelocity + 0.15) * 20) / 20);
+          await page.locator("#editor-note-velocity").evaluate((node, value) => {
+            node.value = value;
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+          }, editedVelocity);
+          await page.waitForFunction(expected => document.getElementById("editor-note-velocity")?.value === expected, editedVelocity, { timeout: 5000 });
+          await page.waitForFunction(() => {
+            const status = document.getElementById("status")?.textContent ?? "";
+            return status.includes("Auditioning note") && status.includes("Draft");
+          }, null, { timeout: 5000 });
+          const pianoAfterVelocity = await page.evaluate(() => ({
+            velocity: document.getElementById("editor-note-velocity")?.value ?? null,
+            status: document.getElementById("status")?.textContent ?? null,
+          }));
+          await page.locator("#editor-undo").click({ force: true });
+          await page.waitForFunction(expected => document.getElementById("editor-note-velocity")?.value === expected, pianoBefore.velocity, { timeout: 5000 });
+          const pianoEvidence = { noteCount: pianoNoteCount, before: pianoBefore, afterPitch: pianoAfterPitch, afterVelocity: pianoAfterVelocity };
+
           await page.locator('[data-editor-preview="original"]').click({ force: true });
           await page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Previewing Original"), null, { timeout: 5000 });
           await page.locator('[data-editor-preview="draft"]').click({ force: true });
@@ -352,6 +406,7 @@ jobs:
             sectionAuditionStatus,
             sectionTransformStatus,
             sectionStructureEvidence,
+            pianoEvidence,
             editorEvidence,
             pageErrors,
             apiFailures,

@@ -15,6 +15,7 @@ export const EDIT_COMMANDS = Object.freeze({
   SET_EFFECT_AMOUNT: "SetEffectAmount",
   TRANSPOSE: "Transpose",
   CHANGE_VELOCITY: "ChangeVelocity",
+  EDIT_NOTE: "EditNote",
   SET_SECTION_ENERGY: "SetSectionEnergy",
   TRANSFORM_SECTION: "TransformSection",
   DUPLICATE_SECTION: "DuplicateSection",
@@ -418,6 +419,38 @@ export function applyEditCommand(score, command) {
       const list = command.drum ? track.drumEvents : track.events;
       if (!Number.isInteger(command.eventIndex) || !list?.[command.eventIndex]) throw new Error("editor_event_not_found");
       list[command.eventIndex].velocity = assertFinite(command.velocity, "editor_velocity_required");
+      break;
+    }
+    case EDIT_COMMANDS.EDIT_NOTE: {
+      const track = findTrack(candidate, command.trackId);
+      if (track.isDrumTrack) throw new Error("editor_note_track_required");
+      if (!Number.isInteger(command.eventIndex) || !track.events?.[command.eventIndex]) throw new Error("editor_event_not_found");
+      const hasPitch = command.pitch !== undefined;
+      const hasDuration = command.duration !== undefined;
+      const hasVelocity = command.velocity !== undefined;
+      if (!hasPitch && !hasDuration && !hasVelocity) throw new Error("editor_note_edit_required");
+      const event = track.events[command.eventIndex];
+      if (hasPitch) {
+        const pitch = assertFinite(command.pitch, "editor_note_pitch_required");
+        if (!Number.isInteger(pitch) || pitch < SCORE_LIMITS.MIN_MIDI_PITCH || pitch > SCORE_LIMITS.MAX_MIDI_PITCH) {
+          throw new Error("editor_note_pitch_out_of_range");
+        }
+        event.pitch = pitch;
+      }
+      if (hasDuration) {
+        const duration = assertFinite(command.duration, "editor_note_duration_required");
+        const timelineBeats = candidate.bars * beatsPerBar(candidate);
+        const maxDuration = Math.min(64, timelineBeats - event.start);
+        if (duration < 0.0001 || duration > maxDuration) throw new Error("editor_note_duration_out_of_range");
+        event.duration = duration;
+      }
+      if (hasVelocity) {
+        const velocity = assertFinite(command.velocity, "editor_note_velocity_required");
+        if (velocity < SCORE_LIMITS.MIN_VELOCITY || velocity > SCORE_LIMITS.MAX_VELOCITY) {
+          throw new Error("editor_note_velocity_out_of_range");
+        }
+        event.velocity = velocity;
+      }
       break;
     }
     case EDIT_COMMANDS.SET_SECTION_ENERGY: {

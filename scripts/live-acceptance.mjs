@@ -99,7 +99,7 @@ assert.ok(persistentDemoBuffer.data.buffered_composition_id);
 
 async function loadCurrentPlayerHtml() {
   let last = null;
-  const expectedMarker = 'id="editor-section-left"';
+  const expectedMarker = 'id="editor-piano-card"';
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     last = await call("/");
     if (last.data?.raw?.includes(expectedMarker)) return last;
@@ -158,6 +158,11 @@ assert.match(player.data.raw, /id=\"editor-section-right\"/);
 assert.match(player.data.raw, /id=\"editor-section-shorter\"/);
 assert.match(player.data.raw, /id=\"editor-section-longer\"/);
 assert.match(player.data.raw, /id=\"editor-section-audition\"/);
+assert.match(player.data.raw, /id=\"editor-piano-card\"/);
+assert.match(player.data.raw, /id=\"editor-piano-track\"/);
+assert.match(player.data.raw, /id=\"editor-piano-grid\"/);
+assert.match(player.data.raw, /id=\"editor-note-up\"/);
+assert.match(player.data.raw, /id=\"editor-note-velocity\"/);
 assert.match(player.data.raw, /sectionEnergyMultiplier/);
 assert.match(player.data.raw, /type:\"section_energy\"/);
 assert.match(player.data.raw, /type:\"section_transform\"/);
@@ -168,6 +173,9 @@ assert.match(player.data.raw, /function editorLinearSections\(score\)/);
 assert.match(player.data.raw, /async function auditionEditorSection\(\)/);
 assert.match(player.data.raw, /async function transformEditorSection\(transform\)/);
 assert.match(player.data.raw, /async function structureEditorSection\(action,value=null\)/);
+assert.match(player.data.raw, /function renderPianoEditor\(score\)/);
+assert.match(player.data.raw, /async function editEditorNote\(changes\)/);
+assert.match(player.data.raw, /command\.type===\"note_edit\"/);
 assert.match(player.data.raw, /async function openEditor\(\)/);
 assert.match(player.data.raw, /async function previewEditorScore\(options=\{\}\)/);
 assert.match(player.data.raw, /async function exitEditor\(\)/);
