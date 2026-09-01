@@ -145,6 +145,64 @@ function parseComposerJson(text) {
 }
 
 /**
+ * Models sometimes write a coherent 4-bar idea but label the container as
+ * 8/16 bars. That is not a reason to invent notes, and it should not force a
+ * fixture fallback either. Before canonical validation, truthfully trim only
+ * trailing declared silence down to the last audible event, while retaining a
+ * four-bar floor for longer declarations so a one-note placeholder cannot
+ * game the musical-quality gate by collapsing itself to one bar.
+ */
+function trimModelDeclaredTrailingSilence(raw) {
+  const declaredBars = Number(raw?.bars);
+  const beatsPerBar = Number(raw?.timeSignature?.beatsPerBar);
+  const beatUnit = Number(raw?.timeSignature?.beatUnit);
+  if (!Number.isInteger(declaredBars) || declaredBars <= 4) return raw;
+  if (!Number.isFinite(beatsPerBar) || beatsPerBar <= 0 || !Number.isFinite(beatUnit) || beatUnit <= 0) return raw;
+
+  const quarterBeatsPerBar = beatsPerBar * (4 / beatUnit);
+  if (!Number.isFinite(quarterBeatsPerBar) || quarterBeatsPerBar <= 0) return raw;
+
+  let latestAudibleBeat = 0;
+  for (const track of Array.isArray(raw?.tracks) ? raw.tracks : []) {
+    for (const event of Array.isArray(track?.events) ? track.events : []) {
+      const start = Number(event?.start);
+      const duration = Number(event?.duration);
+      if (Number.isFinite(start) && Number.isFinite(duration) && duration > 0) {
+        latestAudibleBeat = Math.max(latestAudibleBeat, start + duration);
+      }
+    }
+    for (const event of Array.isArray(track?.drumEvents) ? track.drumEvents : []) {
+      const start = Number(event?.start);
+      if (Number.isFinite(start)) latestAudibleBeat = Math.max(latestAudibleBeat, start + 0.125);
+    }
+  }
+
+  if (latestAudibleBeat <= 0) return raw;
+  const occupiedBars = Math.max(4, Math.ceil(latestAudibleBeat / quarterBeatsPerBar));
+  if (occupiedBars >= declaredBars) return raw;
+
+  const sections = (Array.isArray(raw.sections) ? raw.sections : [])
+    .filter((section) => Number.isInteger(Number(section?.startBar)) && Number(section.startBar) < occupiedBars)
+    .map((section) => {
+      const startBar = Number(section.startBar);
+      const requestedLength = Number(section.lengthBars);
+      const lengthBars = Math.max(1, Math.min(
+        Number.isFinite(requestedLength) ? Math.trunc(requestedLength) : occupiedBars - startBar,
+        occupiedBars - startBar,
+      ));
+      return { ...section, startBar, lengthBars };
+    });
+
+  return {
+    ...raw,
+    bars: occupiedBars,
+    sections: sections.length
+      ? sections
+      : [{ startBar: 0, lengthBars: occupiedBars, label: "main" }],
+  };
+}
+
+/**
  * Call Workers AI and return a validated, normalized score. Throws on any
  * failure -- callers that want fail-closed behavior should use
  * `composeChannelScore` instead of calling this directly.
@@ -167,7 +225,7 @@ export async function composeWithWorkersAI(env, trusted, context, options = {}) 
   });
 
   const text = extractResponseText(aiResult);
-  const parsed = parseComposerJson(text);
+  const parsed = trimModelDeclaredTrailingSilence(parseComposerJson(text));
   if (parsed.compositionId === undefined || parsed.compositionId === null) {
     parsed.compositionId = compositionId;
   }
