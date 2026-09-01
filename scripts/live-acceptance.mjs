@@ -97,7 +97,21 @@ assert.equal(persistentDemoBuffer.data.ok, true);
 assert.ok(persistentDemoBuffer.data.composition_buffer_count >= 1);
 assert.ok(persistentDemoBuffer.data.buffered_composition_id);
 
-const player = await call("/");
+async function loadCurrentPlayerHtml() {
+  let last = null;
+  const expectedMarker = 'id="editor-section-left"';
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    last = await call("/");
+    if (last.data?.raw?.includes(expectedMarker)) return last;
+    if (attempt < 5) {
+      console.warn(`Root HTML has not converged to the deployed editor yet; retry ${attempt}/4`);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+    }
+  }
+  return last;
+}
+
+const player = await loadCurrentPlayerHtml();
 assert.match(player.data.raw, /data-step="v0\.5-editor"/);
 assert.match(player.data.raw, /id="score-attribution"/);
 assert.match(player.data.raw, /function renderAttribution\(score\)/);
