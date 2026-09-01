@@ -387,7 +387,7 @@ test("root serves V0.5 focused local editor over replay-safe live continuity", a
   assert.match(html, /type:"section_energy"/);
   assert.match(html, /async function auditionEditorSection\(\)/);
   assert.match(html, /async function openEditor\(\)/);
-  assert.match(html, /async function previewEditorScore\(\)/);
+  assert.match(html, /async function previewEditorScore\(options=\{\}\)/);
   assert.match(html, /async function exitEditor\(\)/);
   assert.match(html, /viewState\.editing/);
   assert.match(html, /Back to live discards the local preview/);
