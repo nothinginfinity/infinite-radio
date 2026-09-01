@@ -183,7 +183,10 @@ jobs:
           const arrangeSegmentCount = await page.locator("#editor-arrange-map .arrange-segment").count();
           let originalSectionEnergy = null;
           let editedSectionEnergy = null;
+          let liftedSectionEnergy = null;
+          let droppedSectionEnergy = null;
           let sectionAuditionStatus = null;
+          let sectionTransformStatus = null;
           if (arrangeSegmentCount > 0) {
             originalSectionEnergy = await page.locator("#editor-section-energy").inputValue();
             const originalSectionEnergyNumber = Number(originalSectionEnergy);
@@ -206,6 +209,29 @@ jobs:
             await page.locator("#editor-undo").click({ force: true });
             await page.waitForFunction(expected => document.getElementById("editor-section-energy")?.value === expected, originalSectionEnergy, { timeout: 5000 });
             await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("local changes"), null, { timeout: 5000 });
+
+            assert.equal(await page.locator("#editor-section-lift").isDisabled(), false, "Lift must enable for a selected section");
+            assert.equal(await page.locator("#editor-section-drop").isDisabled(), false, "Drop must enable for a selected section");
+            await page.locator("#editor-section-lift").click({ force: true });
+            await page.waitForFunction(() => {
+              const status = document.getElementById("status")?.textContent ?? "";
+              return status.includes("Auditioning") && status.includes("Draft");
+            }, null, { timeout: 5000 });
+            liftedSectionEnergy = await page.locator("#editor-section-energy").inputValue();
+            assert.ok(Number(liftedSectionEnergy) >= originalSectionEnergyNumber, `Lift must not lower selected section energy: ${originalSectionEnergy} -> ${liftedSectionEnergy}`);
+            await page.locator("#editor-undo").click({ force: true });
+            await page.waitForFunction(expected => document.getElementById("editor-section-energy")?.value === expected, originalSectionEnergy, { timeout: 5000 });
+
+            await page.locator("#editor-section-drop").click({ force: true });
+            await page.waitForFunction(() => {
+              const status = document.getElementById("status")?.textContent ?? "";
+              return status.includes("Auditioning") && status.includes("Draft");
+            }, null, { timeout: 5000 });
+            droppedSectionEnergy = await page.locator("#editor-section-energy").inputValue();
+            sectionTransformStatus = await page.locator("#status").textContent();
+            assert.ok(Number(droppedSectionEnergy) <= originalSectionEnergyNumber, `Drop must not raise selected section energy: ${originalSectionEnergy} -> ${droppedSectionEnergy}`);
+            await page.locator("#editor-undo").click({ force: true });
+            await page.waitForFunction(expected => document.getElementById("editor-section-energy")?.value === expected, originalSectionEnergy, { timeout: 5000 });
           }
           await page.locator('[data-editor-preview="original"]').click({ force: true });
           await page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Previewing Original"), null, { timeout: 5000 });
@@ -264,7 +290,10 @@ jobs:
             arrangeSegmentCount,
             originalSectionEnergy,
             editedSectionEnergy,
+            liftedSectionEnergy,
+            droppedSectionEnergy,
             sectionAuditionStatus,
+            sectionTransformStatus,
             editorEvidence,
             pageErrors,
             apiFailures,
