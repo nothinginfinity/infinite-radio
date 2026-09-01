@@ -1,0 +1,48 @@
+{
+  "worker": "afo-gitzip",
+  "version": "0.2.2-unified",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "infinite-radio",
+    "branch": "main",
+    "path": "src/editor-state.js"
+  },
+  "source_sha": "6df353567290dc2797b4092001502a20c84987bf",
+  "result_sha": "fe0bc24df93c106f3ca12760fda7743ca617b972",
+  "commit_sha": "3de68c7244ab6e9b9321b4a2f36cd4ec9142dfb1",
+  "diff": {
+    "before_length": 10026,
+    "after_length": 10200,
+    "delta": 174,
+    "common_prefix": 4773,
+    "common_suffix": 5172,
+    "before_fingerprint": "a042a833",
+    "after_fingerprint": "42d5df7f"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-09-01T02:11:04.791Z"
+}
