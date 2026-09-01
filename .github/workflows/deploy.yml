@@ -37,6 +37,14 @@ jobs:
           import assert from "node:assert/strict";
           import { chromium } from "playwright";
 
+          const browserAnnotationText = value => String(value ?? "unknown browser-acceptance failure")
+            .replaceAll("%", "%25")
+            .replaceAll("\r", "%0D")
+            .replaceAll("\n", "%0A");
+          process.on("uncaughtExceptionMonitor", error => {
+            console.error(`::error title=Browser acceptance failed::${browserAnnotationText(error?.stack ?? error)}`);
+          });
+
           const browser = await chromium.launch({ headless: true });
           const context = await browser.newContext({
             viewport: { width: 393, height: 852 },
