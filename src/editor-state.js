@@ -498,6 +498,14 @@ export function createEditorSession(score, options = {}) {
     history: [],
     future: [],
     maxHistory: normalizeHistoryLimit(options.maxHistory),
+    // Monotonically increasing per-session revision. Bumped on every
+    // state-changing operation (edit/undo/redo/reset), never on reads.
+    // Callers that mutate a session across a network hop (server-side draft
+    // routes, future tool/MCP dispatch) should pass the last revision they
+    // observed back as an expected-revision guard and fail closed on
+    // mismatch, since a human browser session, an internal co-producer LLM,
+    // and an external MCP agent can otherwise race on stale coordinates.
+    revision: 0,
   };
 }
 
@@ -509,6 +517,7 @@ export function dispatchEdit(session, command) {
     draftScore: next,
     history,
     future: [],
+    revision: (session.revision ?? 0) + 1,
   };
 }
 
@@ -521,6 +530,7 @@ export function undoEdit(session) {
     draftScore,
     history,
     future: [clone(session.draftScore), ...session.future].slice(0, session.maxHistory),
+    revision: (session.revision ?? 0) + 1,
   };
 }
 
@@ -533,6 +543,7 @@ export function redoEdit(session) {
     draftScore: clone(nextDraft),
     history,
     future,
+    revision: (session.revision ?? 0) + 1,
   };
 }
 
@@ -544,6 +555,7 @@ export function resetDraft(session) {
     draftScore: clone(session.baseScore),
     history,
     future: [],
+    revision: (session.revision ?? 0) + 1,
   };
 }
 
