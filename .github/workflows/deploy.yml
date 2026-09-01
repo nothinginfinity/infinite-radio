@@ -192,7 +192,15 @@ jobs:
           await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("matches original"), null, { timeout: 5000 });
           await page.locator("#editor-exit").click({ force: true });
           await page.waitForFunction(() => !document.getElementById("editor-sheet")?.classList.contains("open"), null, { timeout: 5000 });
-          await page.waitForFunction(() => document.getElementById("status")?.textContent?.startsWith("Back to live"), null, { timeout: 10000 });
+          // The live-rejoin status text is intentionally transient: if the
+          // authoritative position lands near the buffer threshold, the next
+          // animation frame can replace "Back to live" with "Preparing next
+          // composition…". Verify the durable behavior instead of racing a
+          // one-frame label: audio is running and the live playhead advances.
+          await page.waitForFunction(() => document.getElementById("audio-chip")?.textContent?.includes("running"), null, { timeout: 10000 });
+          const livePositionAfterExitFirst = await page.locator("#position").textContent();
+          await page.waitForTimeout(1600);
+          const livePositionAfterExitSecond = await page.locator("#position").textContent();
           const editorEvidence = await page.evaluate(() => ({
             viewportWidth: window.innerWidth,
             scrollWidth: document.documentElement.scrollWidth,
@@ -202,6 +210,9 @@ jobs:
           }));
           assert.ok(editorEvidence.scrollWidth <= editorEvidence.viewportWidth, `mobile horizontal overflow: ${JSON.stringify(editorEvidence)}`);
           assert.equal(editorEvidence.editorOpen, false, "editor must close before live playback resumes");
+          assert.notEqual(livePositionAfterExitSecond, livePositionAfterExitFirst, `live playhead must advance after editor exit: ${JSON.stringify({ livePositionAfterExitFirst, livePositionAfterExitSecond, editorEvidence })}`);
+          assert.ok(!String(editorEvidence.status).startsWith("Station paused:"), `live rejoin paused the station: ${editorEvidence.status}`);
+          assert.ok(!String(editorEvidence.status).startsWith("Previewing "), `editor preview state leaked after exit: ${editorEvidence.status}`);
           assert.equal(pageErrors.length, 0, `page errors after editor flow: ${pageErrors.join(" | ")}`);
           assert.deepEqual(apiFailures, [], `API failures after editor flow: ${JSON.stringify(apiFailures)}`);
 
