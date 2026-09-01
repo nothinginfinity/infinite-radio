@@ -25,23 +25,42 @@ async function call(path, { method = "GET", creatorId, providerKey, body, expect
   if (creatorId) headers["x-creator-id"] = creatorId;
   if (providerKey) headers["x-provider-key"] = providerKey;
   if (body !== undefined) headers["content-type"] = "application/json";
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await response.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { raw: text };
+
+  // Cloudflare can briefly answer from an old Durable Object instance while a
+  // freshly deployed class is being restarted. That exact platform response is
+  // transient and expected immediately after `wrangler deploy`; retry it without
+  // weakening acceptance for any other 4xx/5xx response.
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { raw: text };
+    }
+
+    const durableObjectDeployReset = response.status === 500
+      && data?.error === "Durable Object reset because its code was updated.";
+    if (durableObjectDeployReset && attempt < maxAttempts) {
+      console.warn(`Transient Durable Object deploy reset on ${method} ${path}; retry ${attempt}/${maxAttempts - 1}`);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+      continue;
+    }
+
+    assert.ok(
+      expected.includes(response.status),
+      `${method} ${path} expected ${expected.join("/")} got ${response.status}: ${text}`,
+    );
+    return { response, data };
   }
-  assert.ok(
-    expected.includes(response.status),
-    `${method} ${path} expected ${expected.join("/")} got ${response.status}: ${text}`,
-  );
-  return { response, data };
+
+  throw new Error(`unreachable_live_acceptance_retry_exhausted:${method}:${path}`);
 }
 
 const health = await call("/health");
