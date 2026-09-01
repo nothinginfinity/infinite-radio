@@ -270,24 +270,33 @@ Manual UI edits and later AI-produced score patches must converge on the same co
 
 ---
 
-## V0.6 — AI Co-Producer / targeted score patches — PLANNED
+## V0.6 — AI Co-Producer via tool-operated editor (EditCommand as LLM/MCP surface) — PLANNED
 
-Goal: make the LLM a bounded collaborator that can change selected musical regions instead of regenerating whole songs.
+Goal: make the LLM a bounded collaborator that operates the same deterministic editor a human uses, by calling the existing `EditCommand` vocabulary as tools, instead of regenerating whole songs or authoring a parallel patch-diff format.
+
+### Architecture decision — 2026-09-01
+- Supersedes the earlier standalone `score-patch` diff contract as the primary mechanism. The already-live `src/editor-state.js` deterministic command vocabulary (`SetTempo`, `SetTrackGain`, `SetTrackPan`, `SetTrackPatch`, `SetEffectAmount`, `Transpose`, `ChangeVelocity`, `EditNote`, `SetSectionEnergy`, `TransformSection`, `DuplicateSection`, `MoveSection`, `ResizeSection`, `SemanticMacro`) plus its `createEditorSession` / `dispatchEdit` / `undoEdit` / `redoEdit` / `resetDraft` / `previewScore` reducer already is the shape an LLM tool layer should wrap, rather than a second bespoke mutation format.
+- Internal Infinite Radio co-producer LLM calls: model function tools mapped one-to-one onto the existing `EDIT_COMMANDS`, plus `music.get_score` / `music.get_section` / `music.undo` / `music.redo` / `music.preview`. No MCP hop is required for this in-process case.
+- External agents (ChatGPT, Claude, CairnStone-connected agents) reach the identical surface remotely through an MCP server exposing the same schema — the same validated commands, never a looser or parallel mutation path.
+- The LLM never gets arbitrary JSON-mutation access. Every tool call becomes exactly one `EditCommand`, goes through the existing `applyEditCommand` -> `validateAndNormalizeScore` pipeline, and is rejected outright on validation failure the same way a rejected human edit is.
+- Repo decision: build this inside the existing `nothinginfinity/infinite-radio` repo, not a new repo. The reducer/validator/quality-gate pipeline is the one authoritative music engine and must not be forked or reimplemented elsewhere; a second repo would either duplicate that logic (drift risk) or require a network hop per tool call. Precedent: CairnStone V6 exposes MCP directly on its own Worker rather than through a companion repo, and Infinite Radio should follow the same pattern by adding its own MCP/tool-call route to the existing Worker.
+- New requirement this surfaces: `createEditorSession`/`dispatchEdit` today exist only as an in-memory JS object driven by the browser tab. An LLM or external MCP agent calls tools from the server, not from that tab, so an authoritative server-side draft session (most likely a per-channel-per-draft Durable Object, mirroring the existing `ChannelConductor` pattern) is required so the human's browser and any tool-calling agent converge on one draft/undo-redo state instead of silently diverging. This session/sync design must be scoped before implementation starts — no implementation has begun.
 
 ### Deliverables
-- versioned `score-patch` contract
-- selection model for bars/sections/tracks/events
-- prompts such as “rewrite bars 17-20, keep drums, change bass, modulate to C minor”
-- preserve/lock constraints for untouched score regions
-- patch validation against the same score safety rules
-- preview / apply / reject flow
-- deterministic patch diff
-- model/provider adapter boundary shared with structured composition
+- server-side authoritative draft-session store (Durable Object or equivalent) wrapping the existing `editor-state.js` reducer, reachable from both the browser editor and tool calls
+- one-to-one tool/function schema over the existing `EDIT_COMMANDS` vocabulary, plus `music.get_score`, `music.get_section`, `music.undo`, `music.redo`, `music.preview`
+- in-process model function-tool wiring for Infinite Radio's own co-producer LLM
+- an MCP server surface exposing the identical schema for external agents, added to the existing Worker rather than a new repo
+- selection/addressing model reused from the editor (section index/label, track id, event index) so tool calls and human taps address the same score coordinates
+- audit trail distinguishing tool-issued `EditCommand`s from human-issued ones, feeding later provenance work (V0.7)
+- authorization boundary reusing existing creator/channel ownership checks: which callers (internal co-producer vs. which external agents) may dispatch mutating commands on which channel's draft
 
 ### Acceptance
-- a selected section can be changed while locked sections remain content-identical
-- rejected patch leaves canonical score unchanged
-- accepted patch produces a new valid revision rather than mutating history in place
+- an LLM (internal or MCP-connected external agent) can execute a request such as "duplicate section 2, transpose the lead in section 3 by +12, set the chorus energy to 0.82" as a sequence of individually validated `EditCommand`s
+- a tool-issued command that fails validation leaves the draft unchanged, exactly like a rejected human edit
+- the browser editor and a tool-calling agent operating the same channel's draft converge on one authoritative draft state, never two independent ones
+- no tool call can express raw/arbitrary score JSON mutation outside the `EditCommand` vocabulary
+- external MCP access to a channel's draft respects the same creator/channel authorization boundary as the human editor
 
 ---
 
