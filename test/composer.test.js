@@ -191,6 +191,23 @@ test("composeChannelScore does not fall back when the model response is valid", 
   assert.equal(result.attempts, 1);
 });
 
+test("composeChannelScore trims overdeclared trailing silence instead of discarding a covered musical idea", async () => {
+  const env = fakeEnvWithResponse(validRawScoreJson({
+    bars: 16,
+    sections: [{ startBar: 0, lengthBars: 16, label: "overdeclared" }],
+    tracks: [
+      { id: "lead", patch: "saw_lead", events: [{ pitch: 62, start: 0, duration: 16, velocity: 0.7 }] },
+    ],
+  }));
+  const result = await composeChannelScore(env, trusted(), buildComposerContext({}));
+
+  assert.equal(result.fellBack, false);
+  assert.equal(result.source, "workers-ai");
+  assert.equal(result.score.bars, 4);
+  assert.equal(result.score.sections[0].lengthBars, 4);
+  assert.equal(result.score.compositionId, "model-comp-1");
+});
+
 test("composeChannelScore rejects an obviously placeholder/sparse model score and falls back to fixture", async () => {
   const env = fakeEnvWithResponse(sparseRawScoreJson());
   const result = await composeChannelScore(env, trusted(), buildComposerContext({}));
@@ -199,6 +216,9 @@ test("composeChannelScore rejects an obviously placeholder/sparse model score an
   assert.equal(result.source, "fixture");
   assert.match(result.fallbackReason, /insufficient_temporal_coverage|no_final_section_activity/);
   assert.equal(result.score.schemaVersion, SCORE_SCHEMA_VERSION);
+  // The model declaration may be truthfully trimmed, but the four-bar floor
+  // prevents a one-note placeholder from collapsing itself into a passing score.
+  assert.ok(result.score.bars >= 4);
 });
 
 test("composeChannelScore retries the real composer a bounded number of times before falling back", async () => {
