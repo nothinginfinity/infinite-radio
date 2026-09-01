@@ -410,39 +410,83 @@ export function createFixtureScore(trusted = {}, options = {}) {
   const basePitch = 57 + (rootPitchIndex >= 0 ? rootPitchIndex : 0); // around A3
   const scaleSteps = [0, 3, 5, 7, 10]; // minor-pentatonic-ish relative steps, degrades gracefully for other modes
 
+  // The deterministic fallback should still sound like an arranged musical
+  // idea rather than a metronomic schema demo. These four phrase shapes are
+  // intentionally deterministic, but rotate rhythm, contour, articulation,
+  // dynamics, bass movement, harmony, and drum accents across bars.
+  const phraseRhythms = [
+    [0, 0.75, 1.5, 2.5, 3.25],
+    [0, 1, 1.75, 2.75],
+    [0.5, 1.25, 2, 3, 3.5],
+    [0, 0.5, 1.5, 2.25, 3.5],
+  ];
   const leadEvents = [];
+  const harmonyEvents = [];
+  const bassEvents = [];
+  const drumEvents = [];
+  const halfway = Math.max(1, Math.floor(bars / 2));
+
   for (let bar = 0; bar < bars; bar += 1) {
-    for (let beat = 0; beat < 4; beat += 1) {
-      const step = scaleSteps[(bar + beat) % scaleSteps.length];
+    const rhythm = phraseRhythms[bar % phraseRhythms.length];
+    const variation = bar >= halfway ? 1 : 0;
+    rhythm.forEach((beat, index) => {
+      const step = scaleSteps[(bar * 2 + index + variation) % scaleSteps.length];
+      const phrasePeak = bar % 4 === 3 && index === rhythm.length - 1 ? 12 : 0;
       leadEvents.push({
-        pitch: basePitch + step,
+        pitch: basePitch + step + phrasePeak,
         start: bar * 4 + beat,
-        duration: 0.9,
-        velocity: 0.6 + 0.1 * ((bar + beat) % 3),
+        duration: index % 3 === 1 ? 0.45 : index === rhythm.length - 1 ? 0.7 : 0.6,
+        velocity: Math.min(0.92, 0.5 + 0.08 * ((bar + index) % 4) + (variation ? 0.05 : 0)),
+      });
+    });
+
+    // Quiet chordal bed: overlapping scale tones make the fallback harmonically
+    // fuller without depending on samples, arbitrary DSP, or model output.
+    const chordSteps = variation ? [0, 5, 10] : [0, 3, 7];
+    chordSteps.forEach((step, index) => {
+      harmonyEvents.push({
+        pitch: basePitch - 12 + step,
+        start: bar * 4,
+        duration: 3.75,
+        velocity: 0.26 + index * 0.04 + (variation ? 0.04 : 0),
+      });
+    });
+
+    bassEvents.push({
+      pitch: basePitch - 24,
+      start: bar * 4,
+      duration: 2.1,
+      velocity: 0.72 + (bar % 2) * 0.05,
+    });
+    bassEvents.push({
+      pitch: basePitch - 24 + (bar % 2 ? 7 : 5),
+      start: bar * 4 + 2.5,
+      duration: 1.2,
+      velocity: 0.58 + variation * 0.06,
+    });
+
+    drumEvents.push({ patch: "kick", start: bar * 4, velocity: 0.9 });
+    drumEvents.push({ patch: "kick", start: bar * 4 + (bar % 2 ? 2.5 : 2), velocity: 0.72 });
+    if (bar % 4 === 3) drumEvents.push({ patch: "kick", start: bar * 4 + 3.5, velocity: 0.62 });
+    drumEvents.push({ patch: "snare", start: bar * 4 + 1, velocity: 0.76 });
+    drumEvents.push({ patch: "snare", start: bar * 4 + 3, velocity: 0.84 + variation * 0.04 });
+    for (let eighth = 0; eighth < 8; eighth += 1) {
+      const isLast = eighth === 7;
+      drumEvents.push({
+        patch: isLast && bar % 2 === 1 ? "hat_open" : "hat_closed",
+        start: bar * 4 + eighth * 0.5,
+        velocity: 0.28 + (eighth % 2 === 0 ? 0.13 : 0.04) + variation * 0.03,
       });
     }
   }
 
-  const bassEvents = [];
-  for (let bar = 0; bar < bars; bar += 1) {
-    bassEvents.push({
-      pitch: basePitch - 12,
-      start: bar * 4,
-      duration: 3.5,
-      velocity: 0.7,
-    });
-  }
-
-  const drumEvents = [];
-  for (let bar = 0; bar < bars; bar += 1) {
-    drumEvents.push({ patch: "kick", start: bar * 4, velocity: 0.9 });
-    drumEvents.push({ patch: "kick", start: bar * 4 + 2, velocity: 0.7 });
-    drumEvents.push({ patch: "snare", start: bar * 4 + 1, velocity: 0.8 });
-    drumEvents.push({ patch: "snare", start: bar * 4 + 3, velocity: 0.8 });
-    for (let eighth = 0; eighth < 8; eighth += 1) {
-      drumEvents.push({ patch: "hat_closed", start: bar * 4 + eighth * 0.5, velocity: 0.4 });
-    }
-  }
+  const firstSectionBars = bars >= 8 ? Math.floor(bars / 2) : bars;
+  const sections = bars >= 8
+    ? [
+        { startBar: 0, lengthBars: firstSectionBars, label: "fixture_theme", energy: 0.48 },
+        { startBar: firstSectionBars, lengthBars: bars - firstSectionBars, label: "fixture_variation", energy: 0.64 },
+      ]
+    : [{ startBar: 0, lengthBars: bars, label: "fixture_theme", energy: 0.54 }];
 
   const rawScore = {
     schemaVersion: SCORE_SCHEMA_VERSION,
@@ -451,17 +495,16 @@ export function createFixtureScore(trusted = {}, options = {}) {
     timeSignature: { beatsPerBar: 4, beatUnit: 4 },
     key: { root, mode },
     bars,
-    sections: [
-      { startBar: 0, lengthBars: bars, label: "fixture_loop", energy: 0.5 },
-    ],
+    sections,
     tracks: [
-      { id: "lead", patch: "saw_lead", pan: 0, gain: 0.7, events: leadEvents, effects: [{ type: "filter_lowpass", amount: 0.4 }] },
-      { id: "bass", patch: "sub_bass", pan: 0, gain: 0.8, events: bassEvents, effects: [] },
-      { id: "drums", isDrumTrack: true, pan: 0, gain: 0.9, drumEvents, effects: [] },
+      { id: "lead", patch: "saw_lead", pan: 0.12, gain: 0.68, events: leadEvents, effects: [{ type: "filter_lowpass", amount: 0.3 }, { type: "delay", amount: 0.18 }] },
+      { id: "harmony", patch: "triangle_pad", pan: -0.16, gain: 0.42, events: harmonyEvents, effects: [{ type: "filter_lowpass", amount: 0.52 }, { type: "reverb_short", amount: 0.28 }] },
+      { id: "bass", patch: "sub_bass", pan: -0.04, gain: 0.78, events: bassEvents, effects: [] },
+      { id: "drums", isDrumTrack: true, pan: 0.08, gain: 0.88, drumEvents, effects: [] },
     ],
     continuity: {
-      motifIds: options.motifIds ?? ["fixture_loop_v1"],
-      energy: 0.5,
+      motifIds: options.motifIds ?? ["fixture_phrase_v2"],
+      energy: bars >= 8 ? 0.6 : 0.54,
       transitionHint: null,
       previousCompositionId: options.previousCompositionId ?? null,
     },
