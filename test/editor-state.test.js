@@ -72,6 +72,7 @@ test("semantic brightness, energy, and space macros are deterministic validated 
 
 test("editor session supports local undo, redo, reset, and Original/Draft A-B preview", () => {
   const base = fixture();
+  const baseBassGain = base.tracks.find((track) => track.id === "bass").gain;
   let session = createEditorSession(base);
   assert.equal(draftHasChanges(session), false);
 
@@ -83,7 +84,7 @@ test("editor session supports local undo, redo, reset, and Original/Draft A-B pr
   assert.equal(previewScore(session, "draft").bpm, 140);
 
   session = undoEdit(session);
-  assert.equal(session.draftScore.tracks.find((track) => track.id === "bass").gain, 0.8);
+  assert.equal(session.draftScore.tracks.find((track) => track.id === "bass").gain, baseBassGain);
   assert.equal(session.draftScore.bpm, 140);
 
   session = redoEdit(session);
