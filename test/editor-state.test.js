@@ -56,6 +56,28 @@ test("track mix, patch, and transpose edits remain inside the canonical score co
   assert.doesNotThrow(() => validate(draft));
 });
 
+test("section energy edits stay validated and participate in local history", () => {
+  const base = fixture();
+  const originalEnergy = base.sections[1].energy;
+  let session = createEditorSession(base);
+
+  session = dispatchEdit(session, {
+    type: EDIT_COMMANDS.SET_SECTION_ENERGY,
+    sectionIndex: 1,
+    energy: 0.91,
+  });
+
+  assert.equal(base.sections[1].energy, originalEnergy);
+  assert.equal(session.draftScore.sections[1].energy, 0.91);
+  assert.equal(draftHasChanges(session), true);
+  assert.doesNotThrow(() => validate(session.draftScore));
+
+  session = undoEdit(session);
+  assert.equal(session.draftScore.sections[1].energy, originalEnergy);
+  session = redoEdit(session);
+  assert.equal(session.draftScore.sections[1].energy, 0.91);
+});
+
 test("semantic brightness, energy, and space macros are deterministic validated transforms", () => {
   const base = fixture();
   const dryDraft = applyEditCommand(base, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "dry", amount: 0.8 });
