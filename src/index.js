@@ -703,11 +703,18 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/playback/rejoin") {
-        const rejoined = await this.runCompositionMutation(async () => {
-          const freshState = await this.load(channelId, creatorId);
-          assertChannelOwner(freshState, creatorId);
-          return this.rejoinCompositionPlayback(freshState);
-        });
+        const observedState = await this.load(channelId, creatorId);
+        assertChannelOwner(observedState, creatorId);
+        const observedPlayback = currentCompositionPlayback(observedState);
+        const needsMutation = Boolean(observedState.currentComposition && !observedState.currentCompositionStartedAt)
+          || (observedPlayback.ended && compositionBufferCount(observedState) > 0);
+        const rejoined = needsMutation
+          ? await this.runCompositionMutation(async () => {
+              const freshState = await this.load(channelId, creatorId);
+              assertChannelOwner(freshState, creatorId);
+              return this.rejoinCompositionPlayback(freshState);
+            })
+          : { state: observedState, playback: observedPlayback, advanced: false };
         return json({
           ok: true,
           advanced: rejoined.advanced,
