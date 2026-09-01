@@ -137,6 +137,137 @@ test("section Lift and Drop reshape only the selected section and share local hi
   );
 });
 
+test("section duplicate copies its musical block, shifts the later timeline, and stays undoable", () => {
+  const base = fixture();
+  const sectionIndex = 0;
+  const section = base.sections[sectionIndex];
+  const beatsPerBar = base.timeSignature.beatsPerBar * (4 / base.timeSignature.beatUnit);
+  const insertedBeats = section.lengthBars * beatsPerBar;
+  const selectedLeadEvent = base.tracks[0].events.find((event) => event.start >= 0 && event.start < insertedBeats);
+  const laterLeadEvent = base.tracks[0].events.find((event) => event.start >= insertedBeats);
+  assert.ok(selectedLeadEvent && laterLeadEvent);
+
+  const duplicated = applyEditCommand(base, {
+    type: EDIT_COMMANDS.DUPLICATE_SECTION,
+    sectionIndex,
+  });
+  assert.equal(base.bars, 8);
+  assert.equal(base.sections.length, 2);
+  assert.equal(duplicated.bars, 12);
+  assert.equal(duplicated.sections.length, 3);
+  assert.deepEqual(duplicated.sections.map((item) => item.startBar), [0, 4, 8]);
+  assert.equal(duplicated.sections[1].lengthBars, section.lengthBars);
+  assert.notEqual(duplicated.sections[1].label, duplicated.sections[0].label);
+  assert.ok(duplicated.tracks[0].events.some((event) =>
+    event.pitch === selectedLeadEvent.pitch
+    && event.start === selectedLeadEvent.start + insertedBeats
+    && event.duration === selectedLeadEvent.duration
+    && event.velocity === selectedLeadEvent.velocity));
+  assert.ok(duplicated.tracks[0].events.some((event) =>
+    event.pitch === laterLeadEvent.pitch
+    && event.start === laterLeadEvent.start + insertedBeats
+    && event.duration === laterLeadEvent.duration));
+  assert.doesNotThrow(() => validate(duplicated));
+
+  let session = createEditorSession(base);
+  session = dispatchEdit(session, { type: EDIT_COMMANDS.DUPLICATE_SECTION, sectionIndex });
+  assert.equal(session.draftScore.sections.length, 3);
+  session = undoEdit(session);
+  assert.equal(session.draftScore.sections.length, 2);
+  session = redoEdit(session);
+  assert.equal(session.draftScore.sections.length, 3);
+});
+
+test("section reorder moves adjacent musical blocks instead of changing labels only", () => {
+  const base = fixture();
+  const beatsPerBar = base.timeSignature.beatsPerBar * (4 / base.timeSignature.beatUnit);
+  const firstLengthBeats = base.sections[0].lengthBars * beatsPerBar;
+  const firstEvent = base.tracks[0].events.find((event) => event.start < firstLengthBeats);
+  const secondEvent = base.tracks[0].events.find((event) => event.start >= firstLengthBeats);
+  assert.ok(firstEvent && secondEvent);
+
+  const moved = applyEditCommand(base, {
+    type: EDIT_COMMANDS.MOVE_SECTION,
+    sectionIndex: 1,
+    direction: -1,
+  });
+  assert.equal(moved.bars, base.bars);
+  assert.equal(moved.sections[0].label, base.sections[1].label);
+  assert.equal(moved.sections[1].label, base.sections[0].label);
+  assert.deepEqual(moved.sections.map((section) => section.startBar), [0, 4]);
+  assert.ok(moved.tracks[0].events.some((event) =>
+    event.pitch === secondEvent.pitch && event.start === secondEvent.start - firstLengthBeats));
+  assert.ok(moved.tracks[0].events.some((event) =>
+    event.pitch === firstEvent.pitch && event.start === firstEvent.start + firstLengthBeats));
+  assert.doesNotThrow(() => validate(moved));
+
+  assert.throws(
+    () => applyEditCommand(base, { type: EDIT_COMMANDS.MOVE_SECTION, sectionIndex: 0, direction: -1 }),
+    /editor_section_move_out_of_range/,
+  );
+});
+
+test("section length plus or minus one bar splices real events and shifts later sections", () => {
+  const base = fixture();
+  const beatsPerBar = base.timeSignature.beatsPerBar * (4 / base.timeSignature.beatUnit);
+  const section = base.sections[0];
+  const endBeat = (section.startBar + section.lengthBars) * beatsPerBar;
+  const finalBarStart = endBeat - beatsPerBar;
+  const sourceFinalBarEvent = base.tracks[0].events.find((event) => event.start >= finalBarStart && event.start < endBeat);
+  const laterEvent = base.tracks[0].events.find((event) => event.start >= endBeat);
+  assert.ok(sourceFinalBarEvent && laterEvent);
+
+  const longer = applyEditCommand(base, {
+    type: EDIT_COMMANDS.RESIZE_SECTION,
+    sectionIndex: 0,
+    deltaBars: 1,
+  });
+  assert.equal(longer.bars, 9);
+  assert.equal(longer.sections[0].lengthBars, 5);
+  assert.equal(longer.sections[1].startBar, 5);
+  assert.ok(longer.tracks[0].events.some((event) =>
+    event.pitch === sourceFinalBarEvent.pitch && event.start === sourceFinalBarEvent.start + beatsPerBar));
+  assert.ok(longer.tracks[0].events.some((event) =>
+    event.pitch === laterEvent.pitch && event.start === laterEvent.start + beatsPerBar));
+  assert.doesNotThrow(() => validate(longer));
+
+  const shorter = applyEditCommand(base, {
+    type: EDIT_COMMANDS.RESIZE_SECTION,
+    sectionIndex: 0,
+    deltaBars: -1,
+  });
+  assert.equal(shorter.bars, 7);
+  assert.equal(shorter.sections[0].lengthBars, 3);
+  assert.equal(shorter.sections[1].startBar, 3);
+  assert.equal(shorter.tracks[0].events.some((event) => event.start >= finalBarStart && event.start < endBeat), false);
+  assert.ok(shorter.tracks[0].events.some((event) =>
+    event.pitch === laterEvent.pitch && event.start === laterEvent.start - beatsPerBar));
+  assert.doesNotThrow(() => validate(shorter));
+});
+
+test("structural section edits fail closed for ambiguous layouts and invalid bounded operations", () => {
+  const base = fixture();
+  const ambiguous = structuredClone(base);
+  ambiguous.sections[1].startBar = 3;
+  assert.throws(
+    () => applyEditCommand(ambiguous, { type: EDIT_COMMANDS.DUPLICATE_SECTION, sectionIndex: 0 }),
+    /editor_section_layout_not_linear/,
+  );
+
+  const oneBar = createFixtureScore(
+    { channelId: "editor-channel", creatorId: "editor-creator", now: 1000 },
+    { compositionId: "one-bar", bars: 1, bpm: 118 },
+  );
+  assert.throws(
+    () => applyEditCommand(oneBar, { type: EDIT_COMMANDS.RESIZE_SECTION, sectionIndex: 0, deltaBars: -1 }),
+    /editor_section_min_length/,
+  );
+  assert.throws(
+    () => applyEditCommand(base, { type: EDIT_COMMANDS.RESIZE_SECTION, sectionIndex: 0, deltaBars: 2 }),
+    /editor_section_resize_delta_invalid/,
+  );
+});
+
 test("semantic brightness, energy, and space macros are deterministic validated transforms", () => {
   const base = fixture();
   const dryDraft = applyEditCommand(base, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "dry", amount: 0.8 });
