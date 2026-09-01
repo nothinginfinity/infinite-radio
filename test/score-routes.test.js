@@ -390,6 +390,11 @@ test("root serves V0.5 focused local editor over replay-safe live continuity", a
   assert.match(html, /id="editor-section-shorter"/);
   assert.match(html, /id="editor-section-longer"/);
   assert.match(html, /id="editor-section-audition"/);
+  assert.match(html, /id="editor-piano-card"/);
+  assert.match(html, /id="editor-piano-track"/);
+  assert.match(html, /id="editor-piano-grid"/);
+  assert.match(html, /id="editor-note-up"/);
+  assert.match(html, /id="editor-note-velocity"/);
   assert.match(html, /sectionEnergyMultiplier/);
   assert.match(html, /type:"section_energy"/);
   assert.match(html, /type:"section_transform"/);
@@ -400,6 +405,9 @@ test("root serves V0.5 focused local editor over replay-safe live continuity", a
   assert.match(html, /async function auditionEditorSection\(\)/);
   assert.match(html, /async function transformEditorSection\(transform\)/);
   assert.match(html, /async function structureEditorSection\(action,value=null\)/);
+  assert.match(html, /function renderPianoEditor\(score\)/);
+  assert.match(html, /async function editEditorNote\(changes\)/);
+  assert.match(html, /command\.type===\"note_edit\"/);
   assert.match(html, /async function openEditor\(\)/);
   assert.match(html, /async function previewEditorScore\(options=\{\}\)/);
   assert.match(html, /async function exitEditor\(\)/);
