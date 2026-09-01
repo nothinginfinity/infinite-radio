@@ -140,7 +140,12 @@ function applySemanticMacro(candidate, command) {
   if (macro === "spacious" || macro === "dry") {
     const target = macro === "spacious" ? 0.35 + amount * 0.55 : Math.max(0, 0.2 - amount * 0.2);
     for (const track of tracks) {
-      setEffectAmount(track, "reverb_short", target, { create: macro === "spacious" });
+      if (macro === "spacious") {
+        setEffectAmount(track, "reverb_short", target, { create: true });
+      } else {
+        const reverb = track.effects.find((effect) => effect.type === "reverb_short");
+        if (reverb) reverb.amount = target;
+      }
       const delay = track.effects.find((effect) => effect.type === "delay");
       if (delay) delay.amount = macro === "spacious" ? clamp(delay.amount + 0.12 + amount * 0.28, 0, 1) : target;
     }
