@@ -328,13 +328,13 @@ test("/score/next is channel-scoped: a second channel gets its own independent q
   assert.equal(alphaState.state.compositionQueue[0].channelId, "alpha");
 });
 
-test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity and no editor mutation path", async () => {
+test("root serves V0.5 focused local editor over replay-safe live continuity", async () => {
   const response = await worker.fetch(new Request("https://infinite-radio.test/"), {});
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /text\/html/);
   const html = await response.text();
 
-  assert.match(html, /data-step="v0\.4-step-3"/);
+  assert.match(html, /data-step="v0\.5-editor"/);
   assert.match(html, /id="score-attribution"/);
   assert.match(html, /id="attr-provenance"/);
   assert.match(html, /id="attr-prompt"/);
@@ -374,6 +374,17 @@ test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity an
   assert.match(html, /\/score\/library/);
   assert.match(html, /library replay/);
   assert.match(html, /id="return-live"/);
+  assert.match(html, /id="edit-open"/);
+  assert.match(html, /id="editor-sheet"/);
+  assert.match(html, /data-editor-preview="original"/);
+  assert.match(html, /data-editor-preview="draft"/);
+  assert.match(html, /data-editor-macro="brighter"/);
+  assert.match(html, /data-editor-macro="dry"/);
+  assert.match(html, /async function openEditor\(\)/);
+  assert.match(html, /async function previewEditorScore\(\)/);
+  assert.match(html, /async function exitEditor\(\)/);
+  assert.match(html, /viewState\.editing/);
+  assert.match(html, /Back to live discards the local preview/);
   assert.match(html, /const CROSSFADE_SECONDS=4/);
   assert.match(html, /adoptContext\(sharedContext\)/);
   assert.match(html, /rampMasterTo\(value,seconds=0\)/);
@@ -402,12 +413,12 @@ test("root serves V0.4 Step 2 dual-deck crossfade with replay-safe continuity an
   assert.ok(liveResyncIndex > firstRendererPlayIndex, "live network rejoin must happen only after audible scheduling begins");
   assert.match(html, /resumeIfPlaying&&wasPlaying&&!payload\.playback\.ended/);
   assert.match(html, /params\.has\("channel"\)&&params\.has\("creator"\)/);
-  assert.match(html, /const livePlayback=!viewState\.replaying/);
+  assert.match(html, /const livePlayback=!viewState\.replaying&&!viewState\.editing/);
   assert.match(html, /stationState\.autoAdvance=livePlayback/);
   assert.match(html, /Playing library replay · live continuity unchanged/);
   assert.match(html, /Crossfade unavailable · end transition fallback remains active/);
-  assert.match(html, /stationState\.queuedCount<1&&!viewState\.replaying/);
-  assert.match(html, /stationState\.autoAdvance&&!viewState\.replaying&&!stationState\.endedHandled/);
+  assert.match(html, /stationState\.queuedCount<1&&!viewState\.replaying&&!viewState\.editing/);
+  assert.match(html, /stationState\.autoAdvance&&!viewState\.replaying&&!viewState\.editing&&!stationState\.endedHandled/);
   const crossfadeStart = html.indexOf("async function startDualDeckCrossfade");
   const selectionIndex = html.indexOf('await api("/score/select","POST")', crossfadeStart);
   const contextAdoptIndex = html.indexOf("incoming.adoptContext(outgoing.ctx)", crossfadeStart);
