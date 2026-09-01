@@ -161,12 +161,51 @@ jobs:
           assert.notEqual(afterSecond.position, afterFirst.position, "playhead must continue advancing after live rejoin");
           assert.ok(!String(afterSecond.status).startsWith("Station paused:"), `playback was torn down: ${afterSecond.status}`);
 
+          await page.locator("#edit-open").click({ force: true, timeout: 5000 });
+          await page.waitForSelector("#editor-sheet.open", { timeout: 5000 });
+          const editorOriginalBpm = await page.locator("#editor-tempo").inputValue();
+          const editedBpm = String(Math.min(220, Number(editorOriginalBpm) + 7));
+          await page.locator("#editor-tempo").evaluate((node, value) => {
+            node.value = value;
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+          }, editedBpm);
+          await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("local changes"), null, { timeout: 5000 });
+          await page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Previewing Draft"), null, { timeout: 5000 });
+          await page.locator('[data-editor-preview="original"]').click({ force: true });
+          await page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Previewing Original"), null, { timeout: 5000 });
+          await page.locator('[data-editor-preview="draft"]').click({ force: true });
+          await page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Previewing Draft"), null, { timeout: 5000 });
+          await page.locator("#editor-undo").click({ force: true });
+          await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("matches original"), null, { timeout: 5000 });
+          await page.locator("#editor-redo").click({ force: true });
+          await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("local changes"), null, { timeout: 5000 });
+          await page.locator("#editor-reset").click({ force: true });
+          await page.waitForFunction(() => document.getElementById("editor-draft-label")?.textContent?.includes("matches original"), null, { timeout: 5000 });
+          await page.locator("#editor-exit").click({ force: true });
+          await page.waitForFunction(() => !document.getElementById("editor-sheet")?.classList.contains("open"), null, { timeout: 5000 });
+          await page.waitForFunction(() => document.getElementById("status")?.textContent?.startsWith("Back to live"), null, { timeout: 10000 });
+          const editorEvidence = await page.evaluate(() => ({
+            viewportWidth: window.innerWidth,
+            scrollWidth: document.documentElement.scrollWidth,
+            editorOpen: document.getElementById("editor-sheet")?.classList.contains("open") ?? false,
+            draftLabel: document.getElementById("editor-draft-label")?.textContent ?? null,
+            status: document.getElementById("status")?.textContent ?? null,
+          }));
+          assert.ok(editorEvidence.scrollWidth <= editorEvidence.viewportWidth, `mobile horizontal overflow: ${JSON.stringify(editorEvidence)}`);
+          assert.equal(editorEvidence.editorOpen, false, "editor must close before live playback resumes");
+          assert.equal(pageErrors.length, 0, `page errors after editor flow: ${pageErrors.join(" | ")}`);
+          assert.deepEqual(apiFailures, [], `API failures after editor flow: ${JSON.stringify(apiFailures)}`);
+
           const evidence = {
             ok: true,
             target,
             before,
             afterFirst,
             afterSecond,
+            editorOriginalBpm,
+            editedBpm,
+            editorEvidence,
             pageErrors,
             apiFailures,
             totalStarts,
