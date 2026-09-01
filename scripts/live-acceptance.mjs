@@ -141,7 +141,7 @@ assert.match(player.data.raw, /sectionEnergyMultiplier/);
 assert.match(player.data.raw, /type:\"section_energy\"/);
 assert.match(player.data.raw, /async function auditionEditorSection\(\)/);
 assert.match(player.data.raw, /async function openEditor\(\)/);
-assert.match(player.data.raw, /async function previewEditorScore\(\)/);
+assert.match(player.data.raw, /async function previewEditorScore\(options=\{\}\)/);
 assert.match(player.data.raw, /async function exitEditor\(\)/);
 assert.match(player.data.raw, /viewState\.editing/);
 assert.match(player.data.raw, /local only/);
