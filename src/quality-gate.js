@@ -43,7 +43,7 @@ function windowCountFor(bars) {
  * inspected/tested independently of the pass/fail gate below.
  */
 export function computeTemporalCoverage(score) {
-  const beatsPerBar = score.timeSignature.beatsPerBar;
+  const beatsPerBar = score.timeSignature.beatsPerBar * (4 / score.timeSignature.beatUnit);
   const totalBeats = score.bars * beatsPerBar;
   const windowCount = windowCountFor(score.bars);
   const windowBeats = totalBeats / windowCount;
