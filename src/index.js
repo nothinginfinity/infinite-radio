@@ -25,6 +25,7 @@ import {
 } from "./station-state.js";
 import { buildComposerContext, composeChannelScore } from "./composer.js";
 import {
+  EDIT_COMMANDS,
   createEditorSession,
   dispatchEdit,
   draftHasChanges,
@@ -78,6 +79,12 @@ function errorResponse(error) {
     "draft_no_current_composition",
     "draft_not_started",
     "draft_command_required",
+    "draft_expected_revision_required",
+    "draft_revision_conflict",
+    "draft_note_ref_invalid",
+    "draft_note_ref_stale",
+    "draft_note_ref_unsupported",
+    "draft_section_not_found",
   ]);
   const message = error?.message ?? "internal_error";
   // Every EditCommand rejection thrown by editor-state.js's applyEditCommand
@@ -103,6 +110,48 @@ function channelRoute(pathname) {
 
 function bytesToHex(bytes) {
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * V0.6 Step 1b -- durable, opaque note addressing (design review from
+ * chatgpt:infinite-radio, msg:6c8119a9-a83e-499e-80a6-58c9e16a51fc,
+ * invariant 2). A bare `eventIndex` is not a durable external note address:
+ * structural edits (and upcoming add/delete) can reorder or shift indices
+ * out from under a caller holding an old one. `note_ref` binds the
+ * addressing coordinates plus the exact draft revision and a content
+ * fingerprint of the event at that coordinate, so a stale or forged ref is
+ * rejected rather than silently mutating the wrong note. This does not
+ * change the canonical score schema or the EditCommand vocabulary -- a
+ * note_ref is resolved back to a plain trackId/eventIndex EditNote command
+ * before it ever reaches the reducer.
+ */
+async function noteFingerprint(event) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${event.pitch}:${event.start}:${event.duration}:${event.velocity}`),
+  );
+  return bytesToHex(new Uint8Array(digest)).slice(0, 16);
+}
+
+function encodeNoteRef({ trackId, eventIndex, revision, fingerprint }) {
+  return btoa(JSON.stringify({ trackId, eventIndex, revision, fingerprint }));
+}
+
+function decodeNoteRef(raw) {
+  try {
+    const decoded = JSON.parse(atob(String(raw)));
+    if (
+      typeof decoded.trackId !== "string"
+      || !Number.isInteger(decoded.eventIndex)
+      || !Number.isInteger(decoded.revision)
+      || typeof decoded.fingerprint !== "string"
+    ) {
+      throw new Error("shape");
+    }
+    return decoded;
+  } catch {
+    throw new Error("draft_note_ref_invalid");
+  }
 }
 
 export async function credentialRefFor(provider, rawKey) {
@@ -346,6 +395,25 @@ export class ChannelConductor {
     const session = await this.loadDraftSession();
     if (!session) throw new Error("draft_not_started");
     return session;
+  }
+
+  requireExpectedRevision(session, body) {
+    if (!Number.isInteger(body?.expectedRevision)) throw new Error("draft_expected_revision_required");
+    if (body.expectedRevision !== (session.revision ?? 0)) throw new Error("draft_revision_conflict");
+  }
+
+  async resolveDraftCommand(session, command) {
+    if (command.noteRef === undefined) return command;
+    if (command.type !== EDIT_COMMANDS.EDIT_NOTE) throw new Error("draft_note_ref_unsupported");
+    const decoded = decodeNoteRef(command.noteRef);
+    if (decoded.revision !== (session.revision ?? 0)) throw new Error("draft_note_ref_stale");
+    const track = session.draftScore.tracks.find((item) => item.id === decoded.trackId);
+    const event = track?.events?.[decoded.eventIndex];
+    if (!track || !event) throw new Error("draft_note_ref_invalid");
+    const fingerprint = await noteFingerprint(event);
+    if (fingerprint !== decoded.fingerprint) throw new Error("draft_note_ref_stale");
+    const { noteRef, ...rest } = command;
+    return { ...rest, trackId: decoded.trackId, eventIndex: decoded.eventIndex };
   }
 
   async generateWithProvider(state, prompt, rawKey, durationSeconds) {
@@ -1046,6 +1114,7 @@ export class ChannelConductor {
             hasChanges: draftHasChanges(session),
             baseScore: session.baseScore,
             draftScore: session.draftScore,
+            revision: session.revision,
           },
           { status: 201 },
         );
@@ -1058,6 +1127,7 @@ export class ChannelConductor {
           hasChanges: draftHasChanges(session),
           baseScore: session.baseScore,
           draftScore: session.draftScore,
+          revision: session.revision,
           historyLength: session.history.length,
           futureLength: session.future.length,
         });
@@ -1067,12 +1137,15 @@ export class ChannelConductor {
         const session = await this.requireDraftSession();
         const body = (await readJson(request)) ?? {};
         if (!body.command || typeof body.command !== "object") throw new Error("draft_command_required");
-        const next = dispatchEdit(session, body.command);
+        this.requireExpectedRevision(session, body);
+        const command = await this.resolveDraftCommand(session, body.command);
+        const next = dispatchEdit(session, command);
         await this.persistDraftSession(next);
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
           draftScore: next.draftScore,
+          revision: next.revision,
           historyLength: next.history.length,
           futureLength: next.future.length,
         });
@@ -1080,12 +1153,15 @@ export class ChannelConductor {
 
       if (request.method === "POST" && url.pathname === "/draft/undo") {
         const session = await this.requireDraftSession();
+        const body = (await readJson(request)) ?? {};
+        this.requireExpectedRevision(session, body);
         const next = undoEdit(session);
         await this.persistDraftSession(next);
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
           draftScore: next.draftScore,
+          revision: next.revision,
           historyLength: next.history.length,
           futureLength: next.future.length,
         });
@@ -1093,12 +1169,15 @@ export class ChannelConductor {
 
       if (request.method === "POST" && url.pathname === "/draft/redo") {
         const session = await this.requireDraftSession();
+        const body = (await readJson(request)) ?? {};
+        this.requireExpectedRevision(session, body);
         const next = redoEdit(session);
         await this.persistDraftSession(next);
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
           draftScore: next.draftScore,
+          revision: next.revision,
           historyLength: next.history.length,
           futureLength: next.future.length,
         });
@@ -1106,12 +1185,15 @@ export class ChannelConductor {
 
       if (request.method === "POST" && url.pathname === "/draft/reset") {
         const session = await this.requireDraftSession();
+        const body = (await readJson(request)) ?? {};
+        this.requireExpectedRevision(session, body);
         const next = resetDraft(session);
         await this.persistDraftSession(next);
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
           draftScore: next.draftScore,
+          revision: next.revision,
           historyLength: next.history.length,
           futureLength: next.future.length,
         });
@@ -1120,7 +1202,45 @@ export class ChannelConductor {
       if (request.method === "GET" && url.pathname === "/draft/preview") {
         const session = await this.requireDraftSession();
         const mode = url.searchParams.get("mode") === "original" ? "original" : "draft";
-        return json({ ok: true, mode, score: previewDraftScore(session, mode) });
+        return json({ ok: true, mode, score: previewDraftScore(session, mode), revision: session.revision });
+      }
+
+      if (request.method === "GET" && url.pathname === "/draft/notes") {
+        const session = await this.requireDraftSession();
+        const trackFilter = url.searchParams.get("trackId");
+        const sectionParam = url.searchParams.get("sectionIndex");
+        const score = session.draftScore;
+        const beatsPerBar = score.timeSignature.beatsPerBar * (4 / score.timeSignature.beatUnit);
+        let range = null;
+        if (sectionParam !== null) {
+          const section = score.sections?.[Number(sectionParam)];
+          if (!section) throw new Error("draft_section_not_found");
+          range = {
+            startBeat: section.startBar * beatsPerBar,
+            endBeat: (section.startBar + section.lengthBars) * beatsPerBar,
+          };
+        }
+        const notes = [];
+        for (const track of score.tracks) {
+          if (track.isDrumTrack) continue;
+          if (trackFilter && track.id !== trackFilter) continue;
+          const events = track.events ?? [];
+          for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+            const event = events[eventIndex];
+            if (range && (event.start < range.startBeat || event.start >= range.endBeat)) continue;
+            const fingerprint = await noteFingerprint(event);
+            notes.push({
+              noteRef: encodeNoteRef({ trackId: track.id, eventIndex, revision: session.revision ?? 0, fingerprint }),
+              trackId: track.id,
+              eventIndex,
+              pitch: event.pitch,
+              start: event.start,
+              duration: event.duration,
+              velocity: event.velocity,
+            });
+          }
+        }
+        return json({ ok: true, revision: session.revision, notes });
       }
 
       if (request.method === "POST" && url.pathname === "/brief") {
