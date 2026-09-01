@@ -191,6 +191,7 @@ jobs:
           let droppedSectionEnergy = null;
           let sectionAuditionStatus = null;
           let sectionTransformStatus = null;
+          let sectionStructureEvidence = null;
           if (arrangeSegmentCount > 0) {
             originalSectionEnergy = await page.locator("#editor-section-energy").inputValue();
             const originalSectionEnergyNumber = Number(originalSectionEnergy);
@@ -236,6 +237,58 @@ jobs:
             assert.ok(Number(droppedSectionEnergy) <= originalSectionEnergyNumber, `Drop must not raise selected section energy: ${originalSectionEnergy} -> ${droppedSectionEnergy}`);
             await page.locator("#editor-undo").click({ force: true });
             await page.waitForFunction(expected => document.getElementById("editor-section-energy")?.value === expected, originalSectionEnergy, { timeout: 5000 });
+
+            const segmentLocator = page.locator("#editor-arrange-map .arrange-segment");
+            const structureEvidence = {
+              initialCount: await segmentLocator.count(),
+              duplicate: false,
+              move: false,
+              resize: false,
+              duplicateDisabled: null,
+              moveRightDisabled: null,
+              longerDisabled: null,
+              resizedFrom: null,
+              resizedTo: null,
+            };
+            await segmentLocator.first().click({ force: true });
+            structureEvidence.duplicateDisabled = await page.locator("#editor-section-duplicate").isDisabled();
+            if (!structureEvidence.duplicateDisabled) {
+              const beforeDuplicateCount = await segmentLocator.count();
+              await page.locator("#editor-section-duplicate").click({ force: true });
+              await page.waitForFunction(expected => document.querySelectorAll("#editor-arrange-map .arrange-segment").length === expected, beforeDuplicateCount + 1, { timeout: 5000 });
+              structureEvidence.duplicate = true;
+              assert.ok((await page.locator("#status").textContent()).includes("Auditioning"), "Duplicate must immediately audition the inserted section");
+              await page.locator("#editor-undo").click({ force: true });
+              await page.waitForFunction(expected => document.querySelectorAll("#editor-arrange-map .arrange-segment").length === expected, beforeDuplicateCount, { timeout: 5000 });
+            }
+
+            await segmentLocator.first().click({ force: true });
+            structureEvidence.moveRightDisabled = await page.locator("#editor-section-right").isDisabled();
+            if (!structureEvidence.moveRightDisabled && await segmentLocator.count() > 1) {
+              const firstLabel = await segmentLocator.nth(0).locator("strong").textContent();
+              const secondLabel = await segmentLocator.nth(1).locator("strong").textContent();
+              await page.locator("#editor-section-right").click({ force: true });
+              await page.waitForFunction(expected => document.querySelector("#editor-arrange-map .arrange-segment strong")?.textContent === expected, secondLabel, { timeout: 5000 });
+              assert.equal(await segmentLocator.nth(1).locator("strong").textContent(), firstLabel, "Move must reorder the selected musical section block");
+              structureEvidence.move = true;
+              await page.locator("#editor-undo").click({ force: true });
+              await page.waitForFunction(expected => document.querySelector("#editor-arrange-map .arrange-segment strong")?.textContent === expected, firstLabel, { timeout: 5000 });
+            }
+
+            await segmentLocator.first().click({ force: true });
+            structureEvidence.longerDisabled = await page.locator("#editor-section-longer").isDisabled();
+            if (!structureEvidence.longerDisabled) {
+              const beforeResize = await segmentLocator.first().locator("span").textContent();
+              structureEvidence.resizedFrom = beforeResize;
+              await page.locator("#editor-section-longer").click({ force: true });
+              await page.waitForFunction(expected => document.querySelector("#editor-arrange-map .arrange-segment span")?.textContent !== expected, beforeResize, { timeout: 5000 });
+              structureEvidence.resizedTo = await segmentLocator.first().locator("span").textContent();
+              structureEvidence.resize = true;
+              assert.ok((await page.locator("#status").textContent()).includes("Auditioning"), "Length edit must immediately audition the resized section");
+              await page.locator("#editor-undo").click({ force: true });
+              await page.waitForFunction(expected => document.querySelector("#editor-arrange-map .arrange-segment span")?.textContent === expected, beforeResize, { timeout: 5000 });
+            }
+            sectionStructureEvidence = structureEvidence;
           }
           await page.locator('[data-editor-preview="original"]').click({ force: true });
           await page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Previewing Original"), null, { timeout: 5000 });
@@ -298,6 +351,7 @@ jobs:
             droppedSectionEnergy,
             sectionAuditionStatus,
             sectionTransformStatus,
+            sectionStructureEvidence,
             editorEvidence,
             pageErrors,
             apiFailures,
