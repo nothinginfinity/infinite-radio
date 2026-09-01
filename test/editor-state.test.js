@@ -58,6 +58,10 @@ test("track mix, patch, and transpose edits remain inside the canonical score co
 
 test("semantic brightness, energy, and space macros are deterministic validated transforms", () => {
   const base = fixture();
+  const dryDraft = applyEditCommand(base, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "dry", amount: 0.8 });
+  assert.ok(dryDraft.tracks.every((track) => track.effects.every((effect) => effect.type !== "reverb_short" || effect.amount <= 0.04)));
+  assert.doesNotThrow(() => validate(dryDraft));
+
   let draft = applyEditCommand(base, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "brighter", amount: 0.75 });
   draft = applyEditCommand(draft, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "more_energy", amount: 0.5 });
   draft = applyEditCommand(draft, { type: EDIT_COMMANDS.SEMANTIC_MACRO, macro: "spacious", amount: 0.6 });
