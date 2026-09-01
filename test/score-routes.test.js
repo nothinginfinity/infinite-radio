@@ -380,6 +380,12 @@ test("root serves V0.5 focused local editor over replay-safe live continuity", a
   assert.match(html, /data-editor-preview="draft"/);
   assert.match(html, /data-editor-macro="brighter"/);
   assert.match(html, /data-editor-macro="dry"/);
+  assert.match(html, /id="editor-arrange-map"/);
+  assert.match(html, /id="editor-section-energy"/);
+  assert.match(html, /id="editor-section-audition"/);
+  assert.match(html, /sectionEnergyMultiplier/);
+  assert.match(html, /type:"section_energy"/);
+  assert.match(html, /async function auditionEditorSection\(\)/);
   assert.match(html, /async function openEditor\(\)/);
   assert.match(html, /async function previewEditorScore\(\)/);
   assert.match(html, /async function exitEditor\(\)/);
