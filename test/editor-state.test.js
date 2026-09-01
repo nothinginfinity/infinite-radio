@@ -239,7 +239,8 @@ test("section length plus or minus one bar splices real events and shifts later 
   assert.equal(shorter.bars, 7);
   assert.equal(shorter.sections[0].lengthBars, 3);
   assert.equal(shorter.sections[1].startBar, 3);
-  assert.equal(shorter.tracks[0].events.some((event) => event.start >= finalBarStart && event.start < endBeat), false);
+  const removedLeadEvents = base.tracks[0].events.filter((event) => event.start >= finalBarStart && event.start < endBeat).length;
+  assert.equal(shorter.tracks[0].events.length, base.tracks[0].events.length - removedLeadEvents);
   assert.ok(shorter.tracks[0].events.some((event) =>
     event.pitch === laterEvent.pitch && event.start === laterEvent.start - beatsPerBar));
   assert.doesNotThrow(() => validate(shorter));
