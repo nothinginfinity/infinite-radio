@@ -46,6 +46,15 @@ function buildSchemaInstructions() {
     "Prefer a compact declared length of 4 or 8 bars unless the musical idea genuinely needs longer. In 4/4, 4 bars spans beats 0-16 and 8 bars spans beats 0-32.",
     "Events must create audible activity across the declared timeline, not just at the beginning. Ensure activity reaches the middle AND final bars; one sustained pad/drone spanning those beats is valid coverage.",
     "Never declare more bars than the events actually occupy. Example: if the latest audible event ends near beat 16 in 4/4, use bars:4 rather than bars:16. If bars:16, activity must extend into the final bars near beats 56-64.",
+    "Compose MUSICAL ROLES, not just valid events. For beat-driven material usually use complementary rhythm/drum, bass, harmony/pad/keys, and lead/texture roles when appropriate; ambient, solo, or minimal material may intentionally use fewer roles. Do not add tracks merely to satisfy a count.",
+    "Treat identity, genreTags, era, energyTarget, recurringMotifs, transitionHint, and listenerPrompt as real compositional constraints. Choose rhythm, register, patch, density, articulation, and effects that support them instead of producing a generic loop with renamed metadata.",
+    "Develop a recognizable motif and vary it. Repetition should establish identity, then change at least one of rhythm, contour, register, duration, velocity, orchestration, or harmony; avoid copy-pasting the exact same bar across the entire score unless strict repetition is musically intentional.",
+    "Use DYNAMICS: vary note/drum velocity and density across phrases. Avoid every event having the same velocity and avoid every track entering on beat 0. Strategic rests, pickups, staggered entrances, and phrase endings are encouraged.",
+    "For 8+ bars, prefer 2-4 coherent sections or phrase regions when the style supports it. Create audible contrast between sections using energy, register, rhythm, orchestration, density, or effects while preserving a recognizable musical identity. A genuinely minimal/ambient piece may evolve more subtly.",
+    "Keep harmony coherent with the declared key/mode. Most pitched notes should support the scale/chord language; chromatic passing or tension notes are allowed when they resolve or serve an intentional color. Bass should reinforce or meaningfully counter the harmony rather than wander randomly.",
+    "Program drums and rhythmic parts with groove rather than a perfectly identical grid when the genre permits: use accents, occasional syncopation, fills or hat variation near phrase/section boundaries. Do not overfill every subdivision.",
+    "Use pan, gain, filters, delay, and reverb as arrangement tools. Create useful depth and separation, but keep effects bounded and intentional; do not put every track at identical gain/pan with identical effects.",
+    "Leave SPACE. Musical quality is not event count: do not fill every beat on every track. Prefer a clear hierarchy of foreground, support, rhythm, and silence over maximum density.",
     "Do not include channelId, creatorId, or any other identity field. Identity is supplied by the runtime; any identity value you include is ignored.",
   ].join("\n");
 }
@@ -152,7 +161,9 @@ export async function composeWithWorkersAI(env, trusted, context, options = {}) 
       { role: "system", content: buildSchemaInstructions() },
       { role: "user", content: buildUserPrompt(context, options.retryFeedback) },
     ],
-    max_tokens: options.maxTokens ?? 2048,
+    // Richer arrangements need enough room for structured note/drum JSON; this
+    // remains bounded and is still far below the score/event safety ceilings.
+    max_tokens: options.maxTokens ?? 3072,
   });
 
   const text = extractResponseText(aiResult);
