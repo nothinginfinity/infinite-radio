@@ -322,6 +322,46 @@ test("a forged or malformed note_ref is rejected as invalid", async () => {
   assert.equal(body.error, "draft_note_ref_invalid");
 });
 
+test("concurrent draft/edit requests with the same expectedRevision serialize: exactly one succeeds, one conflicts, no lost update", async () => {
+  // Regression test for the race flagged by chatgpt:infinite-radio
+  // (msg:ddc1d7c2-5b57-4c31-9be9-831dfb8e5ba1): without a serialized draft
+  // mutation boundary, two concurrent callers could each load revision N,
+  // both pass the expectedRevision check before either persisted, and one
+  // edit would be silently lost. runDraftMutation's promise-tail queue must
+  // make that impossible regardless of how the two requests interleave.
+  const storage = new MemoryStorage();
+  await seedChannelWithComposition(storage);
+  const conductor = new ChannelConductor(makeCtx(storage), {});
+  await conductor.fetch(channelRequest("/draft/start", { method: "POST" }));
+
+  const [firstResponse, secondResponse] = await Promise.all([
+    conductor.fetch(channelRequest("/draft/edit", {
+      method: "POST",
+      body: { expectedRevision: 0, command: { type: "SetTempo", bpm: 150 } },
+    })),
+    conductor.fetch(channelRequest("/draft/edit", {
+      method: "POST",
+      body: { expectedRevision: 0, command: { type: "SetTempo", bpm: 190 } },
+    })),
+  ]);
+  const [firstBody, secondBody] = await Promise.all([firstResponse.json(), secondResponse.json()]);
+
+  const statuses = [firstResponse.status, secondResponse.status].sort((a, b) => a - b);
+  assert.deepEqual(statuses, [200, 400]);
+
+  const succeededBody = firstResponse.status === 200 ? firstBody : secondBody;
+  const conflictedBody = firstResponse.status === 200 ? secondBody : firstBody;
+  assert.equal(conflictedBody.error, "draft_revision_conflict");
+  assert.equal(succeededBody.revision, 1);
+  assert.ok(succeededBody.draftScore.bpm === 150 || succeededBody.draftScore.bpm === 190);
+
+  // The persisted draft must reflect exactly the one edit that won -- not a
+  // merge, not the loser, and the revision must not have advanced twice.
+  const finalState = await (await conductor.fetch(channelRequest("/draft", { method: "GET" }))).json();
+  assert.equal(finalState.revision, 1);
+  assert.equal(finalState.draftScore.bpm, succeededBody.draftScore.bpm);
+});
+
 test("noteRef is only meaningful for EditNote commands", async () => {
   const storage = new MemoryStorage();
   await seedChannelWithComposition(storage);
