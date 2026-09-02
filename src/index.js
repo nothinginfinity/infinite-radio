@@ -312,12 +312,42 @@ export class ChannelConductor {
     this.ctx = ctx;
     this.env = env;
     this.compositionMutationTail = Promise.resolve();
+    this.draftMutationTail = Promise.resolve();
   }
 
   async runCompositionMutation(work) {
     const previous = this.compositionMutationTail;
     let release;
     this.compositionMutationTail = new Promise((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * V0.6 Step 1c -- serialize the entire draft mutation critical section.
+   *
+   * Flagged by chatgpt:infinite-radio (msg:ddc1d7c2-5b57-4c31-9be9-831dfb8e5ba1):
+   * Durable Objects are single-threaded, but async awaits inside one request
+   * still let another request's handler run in between. The expectedRevision
+   * guard alone does not close this -- two concurrent callers can each load
+   * revision N, both pass the check before either persists, and one edit is
+   * silently lost. Mirrors the existing runCompositionMutation promise-tail
+   * pattern: every draft mutation route wraps its ENTIRE fresh-load ->
+   * revision-check -> noteRef-resolve -> reducer-dispatch -> persist
+   * sequence in this queue, so a second call's closure only starts running
+   * after the first's has fully persisted, regardless of how many internal
+   * awaits either one has.
+   */
+  async runDraftMutation(work) {
+    const previous = this.draftMutationTail;
+    let release;
+    this.draftMutationTail = new Promise((resolve) => {
       release = resolve;
     });
     await previous;
@@ -1103,11 +1133,14 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/draft/start") {
-        const freshState = await this.load(channelId, creatorId);
-        assertChannelOwner(freshState, creatorId);
-        if (!freshState.currentComposition) throw new Error("draft_no_current_composition");
-        const session = createEditorSession(freshState.currentComposition);
-        await this.persistDraftSession(session);
+        const session = await this.runDraftMutation(async () => {
+          const freshState = await this.load(channelId, creatorId);
+          assertChannelOwner(freshState, creatorId);
+          if (!freshState.currentComposition) throw new Error("draft_no_current_composition");
+          const created = createEditorSession(freshState.currentComposition);
+          await this.persistDraftSession(created);
+          return created;
+        });
         return json(
           {
             ok: true,
@@ -1134,13 +1167,16 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/draft/edit") {
-        const session = await this.requireDraftSession();
         const body = (await readJson(request)) ?? {};
         if (!body.command || typeof body.command !== "object") throw new Error("draft_command_required");
-        this.requireExpectedRevision(session, body);
-        const command = await this.resolveDraftCommand(session, body.command);
-        const next = dispatchEdit(session, command);
-        await this.persistDraftSession(next);
+        const next = await this.runDraftMutation(async () => {
+          const session = await this.requireDraftSession();
+          this.requireExpectedRevision(session, body);
+          const command = await this.resolveDraftCommand(session, body.command);
+          const mutated = dispatchEdit(session, command);
+          await this.persistDraftSession(mutated);
+          return mutated;
+        });
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
@@ -1152,11 +1188,14 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/draft/undo") {
-        const session = await this.requireDraftSession();
         const body = (await readJson(request)) ?? {};
-        this.requireExpectedRevision(session, body);
-        const next = undoEdit(session);
-        await this.persistDraftSession(next);
+        const next = await this.runDraftMutation(async () => {
+          const session = await this.requireDraftSession();
+          this.requireExpectedRevision(session, body);
+          const mutated = undoEdit(session);
+          await this.persistDraftSession(mutated);
+          return mutated;
+        });
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
@@ -1168,11 +1207,14 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/draft/redo") {
-        const session = await this.requireDraftSession();
         const body = (await readJson(request)) ?? {};
-        this.requireExpectedRevision(session, body);
-        const next = redoEdit(session);
-        await this.persistDraftSession(next);
+        const next = await this.runDraftMutation(async () => {
+          const session = await this.requireDraftSession();
+          this.requireExpectedRevision(session, body);
+          const mutated = redoEdit(session);
+          await this.persistDraftSession(mutated);
+          return mutated;
+        });
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
@@ -1184,11 +1226,14 @@ export class ChannelConductor {
       }
 
       if (request.method === "POST" && url.pathname === "/draft/reset") {
-        const session = await this.requireDraftSession();
         const body = (await readJson(request)) ?? {};
-        this.requireExpectedRevision(session, body);
-        const next = resetDraft(session);
-        await this.persistDraftSession(next);
+        const next = await this.runDraftMutation(async () => {
+          const session = await this.requireDraftSession();
+          this.requireExpectedRevision(session, body);
+          const mutated = resetDraft(session);
+          await this.persistDraftSession(mutated);
+          return mutated;
+        });
         return json({
           ok: true,
           hasChanges: draftHasChanges(next),
